@@ -1,0 +1,7 @@
+{
+  "name": "explain-diff",
+  "description": "Visual HTML review explainers for code changes — teach the diff instead of dumping it. Interactive walker, literate walkthrough in execution order, readiness verdict, sign-off quiz.",
+  "version": "0.1.0",
+  "author": { "name": "Dragutin Oreski", "email": "dragutin@megi.ai" },
+  "keywords": ["code-review", "diff", "explainer", "artifact"]
+}

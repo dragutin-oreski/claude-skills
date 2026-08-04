@@ -1,0 +1,295 @@
+<title>SLOT: TICKET-123 · short name</title>
+<!-- explain-diff series template. Copy, fill SLOT comments, delete unused walker slots.
+     Design system: paper/teal/plum, Charter body + Avenir headings, token-driven dark mode.
+     Actor colors: --ours (teal) = this repo/your side · --theirs (plum) = counterpart · --client (grey) = client. -->
+<style>
+  :root {
+    --paper: #FBFBF9; --ink: #22302F; --muted: #5C6B69; --line: #E3E7E4;
+    --ours: #0F7B7A; --ours-soft: #E3F0EF; --theirs: #7D4A78; --theirs-soft: #F1E7F0;
+    --client: #6B7280; --client-soft: #EEF0F2;
+    --good: #2F7D46; --good-soft: #E4F0E7; --warn: #A96A0B; --warn-soft: #F7EEDC;
+    --crit: #B3362B; --crit-soft: #F8E7E4;
+    --code-bg: #F2F4F2; --card: #FFFFFF;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #131817; --ink: #E6ECE9; --muted: #9AA8A4; --line: #2A3230;
+      --ours: #45B8B5; --ours-soft: #16302F; --theirs: #C88BC0; --theirs-soft: #2E2030;
+      --client: #9CA3AF; --client-soft: #20262B;
+      --good: #6FBF87; --good-soft: #17281C; --warn: #E0A64E; --warn-soft: #2E2410;
+      --crit: #E2766A; --crit-soft: #321713;
+      --code-bg: #1B2220; --card: #181E1C;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #131817; --ink: #E6ECE9; --muted: #9AA8A4; --line: #2A3230;
+    --ours: #45B8B5; --ours-soft: #16302F; --theirs: #C88BC0; --theirs-soft: #2E2030;
+    --client: #9CA3AF; --client-soft: #20262B;
+    --good: #6FBF87; --good-soft: #17281C; --warn: #E0A64E; --warn-soft: #2E2410;
+    --crit: #E2766A; --crit-soft: #321713;
+    --code-bg: #1B2220; --card: #181E1C;
+  }
+  :root[data-theme="light"] {
+    --paper: #FBFBF9; --ink: #22302F; --muted: #5C6B69; --line: #E3E7E4;
+    --ours: #0F7B7A; --ours-soft: #E3F0EF; --theirs: #7D4A78; --theirs-soft: #F1E7F0;
+    --client: #6B7280; --client-soft: #EEF0F2;
+    --good: #2F7D46; --good-soft: #E4F0E7; --warn: #A96A0B; --warn-soft: #F7EEDC;
+    --crit: #B3362B; --crit-soft: #F8E7E4;
+    --code-bg: #F2F4F2; --card: #FFFFFF;
+  }
+
+  * { box-sizing: border-box; }
+  body { background: var(--paper); color: var(--ink); margin: 0;
+    font-family: Charter, "Iowan Old Style", Georgia, "Times New Roman", serif;
+    font-size: 17px; line-height: 1.62; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 40px 24px 80px; }
+  .prose { max-width: 70ch; }
+
+  h1, h2, h3, .eyebrow, .pill, .btn, th, .verdict-label, .routebadge, .threadlabel,
+  .lane-label, .flagname { font-family: "Avenir Next", Seravek, "Segoe UI", ui-sans-serif, system-ui, sans-serif; }
+  h1 { font-size: 2rem; font-weight: 700; letter-spacing: -0.015em; line-height: 1.15;
+    margin: 6px 0 10px; text-wrap: balance; }
+  h2 { font-size: 1.3rem; font-weight: 650; margin: 0 0 12px; text-wrap: balance; }
+  h3 { font-size: 1.02rem; font-weight: 650; margin: 26px 0 8px; }
+  p { margin: 0 0 14px; }
+  section { margin-top: 52px; }
+  .eyebrow { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--muted); }
+  .secnum { color: var(--ours); }
+  a { color: var(--ours); }
+
+  code, pre { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  code { font-size: 0.86em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px;
+    padding: 14px 16px; overflow-x: auto; font-size: 0.8rem; line-height: 1.55; margin: 0 0 16px; }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .cm { color: var(--muted); font-style: italic; }   /* comments in excerpts */
+  .kw { color: var(--theirs); }                          /* keywords */
+  .st { color: var(--ours); }                        /* strings */
+
+  .pill { display: inline-block; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.02em;
+    padding: 3px 10px; border-radius: 99px; white-space: nowrap; }
+  .pill-good { background: var(--good-soft); color: var(--good); }
+  .pill-warn { background: var(--warn-soft); color: var(--warn); }
+  .pill-crit { background: var(--crit-soft); color: var(--crit); }
+  .pill-ours { background: var(--ours-soft); color: var(--ours); }
+  .pill-theirs   { background: var(--theirs-soft); color: var(--theirs); }
+  .pill-mob  { background: var(--client-soft); color: var(--client); }
+
+  .verdict { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 10px; margin: 22px 0 0; }
+  .verdict-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 14px; }
+  .verdict-label { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+
+  .callout { border: 1px solid var(--line); border-left: 3px solid var(--ours);
+    background: var(--card); border-radius: 8px; padding: 12px 16px; margin: 18px 0; }
+  .callout.warn { border-left-color: var(--warn); }
+  .callout.crit { border-left-color: var(--crit); }
+  .callout p:last-child { margin-bottom: 0; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; margin: 0 0 16px; }
+  .tablewrap { overflow-x: auto; }
+  th { text-align: left; font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); font-weight: 600; padding: 8px 12px 6px; border-bottom: 1px solid var(--line); }
+  td { padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+
+  /* actor lanes (Background section, multi-service changes) */
+  .lanes { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 20px 0; }
+  .lane { border-radius: 10px; padding: 12px 14px; border: 1px solid var(--line); background: var(--card); }
+  .lane-label { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 8px; }
+  .lane.ours { border-top: 3px solid var(--ours); } .lane.ours .lane-label { color: var(--ours); }
+  .lane.theirs   { border-top: 3px solid var(--theirs); }   .lane.theirs .lane-label   { color: var(--theirs); }
+  .lane.client { border-top: 3px solid var(--client); } .lane.client .lane-label { color: var(--client); }
+  .lane ul { margin: 0; padding-left: 18px; font-size: 0.88rem; }
+  .lane li { margin-bottom: 5px; }
+
+  /* interactive walker (one per page) */
+  .walker { border: 1px solid var(--line); border-radius: 12px; background: var(--card);
+    padding: 18px; margin: 20px 0; }
+  .btnrow { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+  .btn { font-size: 0.8rem; font-weight: 600; padding: 7px 13px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--paper); color: var(--ink); cursor: pointer; }
+  .btn:hover { border-color: var(--ours); }
+  .btn:focus-visible { outline: 2px solid var(--ours); outline-offset: 2px; }
+  .btn.active { background: var(--ours); border-color: var(--ours); color: #fff; }
+  .walker .why { font-size: 0.92rem; color: var(--muted); margin: 0 0 12px; font-style: italic; }
+  .threadlabel { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.09em;
+    text-transform: uppercase; color: var(--muted); margin: 14px 0 6px; }
+  .routebadge { display: inline-block; font-size: 0.74rem; font-weight: 700; padding: 4px 12px;
+    border-radius: 7px; margin: 0 6px 6px 0; }
+  .route-det { background: var(--theirs-soft); color: var(--theirs); }
+  .route-llm { background: var(--ours-soft); color: var(--ours); }
+  .gate-pass { background: var(--good-soft); color: var(--good); }
+  .gate-block { background: var(--crit-soft); color: var(--crit); }
+  .gate-warn { background: var(--warn-soft); color: var(--warn); }
+  .userq { font-size: 0.95rem; padding: 10px 14px; background: var(--client-soft);
+    border-radius: 10px 10px 10px 2px; display: inline-block; }
+  .reply { font-size: 0.95rem; padding: 10px 14px; background: var(--ours-soft);
+    border-radius: 10px 10px 2px 10px; border: 1px solid var(--line); white-space: pre-wrap; }
+  /* state-timeline chips (delete if unused) */
+  .thread { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-height: 34px; }
+  .chip { font-size: 0.74rem; font-weight: 600; padding: 5px 10px; border-radius: 7px;
+    border: 1px solid var(--line); white-space: nowrap;
+    font-family: "Avenir Next", Seravek, ui-sans-serif, system-ui, sans-serif; }
+  .chip small { font-weight: 400; opacity: 0.75; margin-left: 5px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.68rem; }
+  .chip-seed { background: var(--ours-soft); border-color: var(--ours); color: var(--ours); border-style: dashed; }
+  .chip-ai { background: var(--ours-soft); border-color: var(--ours); color: var(--ours); }
+  .chip-user { background: var(--client-soft); border-color: var(--client); color: var(--ink); }
+  .chip-phantom { background: var(--crit-soft); border-color: var(--crit); color: var(--crit); border-style: dotted; }
+  .chip-water { background: var(--warn-soft); border-color: var(--warn); color: var(--warn); }
+  .chip-empty { background: transparent; border-style: dotted; color: var(--muted); font-weight: 400; }
+
+  /* literate walkthrough */
+  .step { margin: 30px 0; }
+  .step .stephead { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+  .step .file { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.8rem; color: var(--theirs); }
+
+  /* readiness rail */
+  .rail { counter-reset: railstep; margin: 20px 0; padding: 0; list-style: none; }
+  .rail li { position: relative; padding: 0 0 22px 46px; }
+  .rail li::before { counter-increment: railstep; content: counter(railstep);
+    position: absolute; left: 0; top: 0; width: 30px; height: 30px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-family: "Avenir Next", Seravek, ui-sans-serif, system-ui, sans-serif;
+    font-weight: 700; font-size: 0.85rem; border: 2px solid var(--line); background: var(--card); }
+  .rail li::after { content: ""; position: absolute; left: 14px; top: 34px; bottom: 4px;
+    width: 2px; background: var(--line); }
+  .rail li:last-child::after { display: none; }
+  .rail li.blocked::before { border-color: var(--crit); color: var(--crit); }
+  .rail li.ready::before { border-color: var(--good); color: var(--good); }
+  .rail li.open::before { border-color: var(--warn); color: var(--warn); }
+  .rail .railtitle { font-weight: 650; font-family: "Avenir Next", Seravek, ui-sans-serif, system-ui, sans-serif; font-size: 0.95rem; }
+  .rail p { font-size: 0.92rem; margin: 4px 0 0; }
+
+  /* quiz */
+  .quiz { border: 1px solid var(--line); border-radius: 10px; background: var(--card);
+    padding: 4px 18px 6px; margin: 14px 0; }
+  .quiz p.q { font-weight: 650; margin: 14px 0 8px;
+    font-family: "Avenir Next", Seravek, ui-sans-serif, system-ui, sans-serif; font-size: 0.95rem; }
+  .quiz ol { margin: 0 0 10px; padding-left: 26px; font-size: 0.93rem; }
+  .quiz ol li { margin-bottom: 4px; }
+  details { margin: 0 0 14px; }
+  summary { cursor: pointer; font-family: "Avenir Next", Seravek, ui-sans-serif, system-ui, sans-serif;
+    font-size: 0.8rem; font-weight: 600; color: var(--ours); }
+  summary:focus-visible { outline: 2px solid var(--ours); outline-offset: 2px; }
+  details div { font-size: 0.92rem; padding: 8px 12px; margin-top: 6px;
+    background: var(--paper); border-radius: 8px; border: 1px solid var(--line); }
+
+  footer { margin-top: 60px; padding-top: 16px; border-top: 1px solid var(--line);
+    font-size: 0.82rem; color: var(--muted); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">SLOT: project · effort · epic · ticket N of M</div>
+  <h1>SLOT: TICKET-123 — headline that states the change's thesis</h1>
+  <p class="prose" style="font-size:1.05rem; color:var(--muted);">SLOT: 2–3 sentence dek — what this is and why it matters.</p>
+
+  <div class="verdict">
+    <!-- 4 cards: your side / their side / blocking gate / posture. pill classes: pill-good|warn|crit -->
+    <div class="verdict-card"><div class="verdict-label">SLOT label</div>
+      <span class="pill pill-good">SLOT verdict</span>
+      <p style="font-size:0.83rem; margin:8px 0 0;">SLOT: one-line evidence.</p></div>
+  </div>
+</header>
+
+<section>
+  <div class="eyebrow"><span class="secnum">01</span> · Background</div>
+  <h2>SLOT: how it worked before</h2>
+  <div class="prose"><p>SLOT: system-before-the-change; use .lanes for multi-actor systems.</p></div>
+</section>
+
+<section>
+  <div class="eyebrow"><span class="secnum">02</span> · Intuition</div>
+  <h2>SLOT: the goal in plain language</h2>
+  <div class="prose"><p>SLOT: before→after wire/data shapes with small concrete payloads (pre blocks).</p></div>
+</section>
+
+<section>
+  <div class="eyebrow"><span class="secnum">03</span> · Behavior</div>
+  <h2>SLOT: walker headline</h2>
+  <div class="walker">
+    <div class="btnrow" id="scenario-btns" role="group" aria-label="Scenarios"></div>
+    <p class="why" id="why"></p>
+    <!-- fixed slots — same DOM for every scenario; adapt labels to walker type -->
+    <div class="threadlabel">Input</div><div><span class="userq" id="slot-in"></span></div>
+    <div class="threadlabel">Route / verdict</div><div id="slot-badges"></div>
+    <div class="threadlabel">Output</div><pre style="margin:0;"><code id="slot-out"></code></pre>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow"><span class="secnum">04</span> · Literate walkthrough</div>
+  <h2>The change, in execution order</h2>
+  <div class="step">
+    <div class="stephead"><span class="pill pill-ours">1 · SLOT step name</span><span class="file">SLOT: path/to/file.py</span></div>
+    <div class="prose"><p>SLOT: the why, 2–4 sentences, before the code.</p></div>
+<pre><code>SLOT: real trimmed excerpt — escape &amp; &lt; &gt;</code></pre>
+  </div>
+  <!-- repeat steps; include one plum (pill-theirs) step for the counterpart's side -->
+</section>
+
+<section>
+  <div class="eyebrow"><span class="secnum">05</span> · Readiness</div>
+  <h2>SLOT: is it deployable, in what order</h2>
+  <ol class="rail">
+    <li class="blocked"><span class="railtitle">SLOT step</span> <span class="pill pill-theirs">owner</span>
+      <p>SLOT: what and why blocked.</p></li>
+    <li class="ready"><span class="railtitle">SLOT step</span> <span class="pill pill-ours">owner</span>
+      <p>SLOT.</p></li>
+  </ol>
+  <h3>Loose ends</h3>
+  <div class="prose"><ul><li>SLOT: stale tickets, unposted contracts, pending benchmarks…</li></ul></div>
+</section>
+
+<section>
+  <div class="eyebrow"><span class="secnum">06</span> · Check yourself</div>
+  <h2>Five questions before you sign off</h2>
+  <div class="quiz">
+    <p class="q">1. SLOT: question targeting a load-bearing subtlety?</p>
+    <ol type="a"><li>SLOT</li><li>SLOT</li><li>SLOT</li><li>SLOT</li></ol>
+    <details><summary>Answer</summary><div><strong>x.</strong> SLOT: why right + why the tempting wrong answer is wrong.</div></details>
+  </div>
+</section>
+
+<footer>
+  Sources: SLOT commits · refs with staleness dates · suite numbers. Generated SLOT-DATE · ticket N of M.
+</footer>
+
+</div>
+
+<script>
+(function () {
+  // One walker per page. Each scenario renders into the fixed slots above.
+  var SCENARIOS = [
+    { label: "SLOT", why: "SLOT: what this scenario teaches.",
+      input: "SLOT", badges: [["gate-pass", "SLOT badge"]], out: "SLOT output" }
+  ];
+  var btnrow = document.getElementById("scenario-btns");
+  function render(idx) {
+    var s = SCENARIOS[idx];
+    Array.prototype.forEach.call(btnrow.children, function (b, i) {
+      b.classList.toggle("active", i === idx);
+      b.setAttribute("aria-pressed", i === idx ? "true" : "false");
+    });
+    document.getElementById("why").textContent = s.why;
+    document.getElementById("slot-in").textContent = s.input;
+    document.getElementById("slot-badges").innerHTML = s.badges.map(function (b) {
+      return '<span class="routebadge ' + b[0] + '">' + b[1] + "</span>";
+    }).join("");
+    document.getElementById("slot-out").textContent = s.out;
+  }
+  SCENARIOS.forEach(function (s, i) {
+    var b = document.createElement("button");
+    b.className = "btn"; b.type = "button"; b.textContent = s.label;
+    b.addEventListener("click", function () { render(i); });
+    btnrow.appendChild(b);
+  });
+  render(0);
+})();
+</script>

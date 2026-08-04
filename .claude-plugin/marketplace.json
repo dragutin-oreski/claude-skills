@@ -1,0 +1,31 @@
+{
+  "name": "claude-skills",
+  "description": "Battle-tested Claude Code skills: visual diff explainers, Codex delegation, resumable /goal prompts.",
+  "owner": {
+    "name": "Dragutin Oreski",
+    "email": "dragutin@megi.ai"
+  },
+  "plugins": [
+    {
+      "name": "explain-diff",
+      "source": "./plugins/explain-diff",
+      "description": "Turn a ticket, branch, or commit range into a visual HTML review explainer: background before diff, one interactive walker for the core mechanism, a literate walkthrough in execution order, a readiness verdict, and a 5-question sign-off quiz (Geoffrey Litt's speed-regulator pattern).",
+      "category": "review",
+      "tags": ["code-review", "diff", "explainer", "artifact", "visualization"]
+    },
+    {
+      "name": "calling-codex",
+      "source": "./plugins/calling-codex",
+      "description": "Call OpenAI Codex from Claude Code via the codex MCP server — registration, the macOS nested-sandbox pitfall, full-access invocation, multi-turn replies, and a troubleshooting table.",
+      "category": "workflow",
+      "tags": ["codex", "openai", "mcp", "second-opinion", "delegation"]
+    },
+    {
+      "name": "goal-prompts",
+      "source": "./plugins/goal-prompts",
+      "description": "Author resumable prompts for Claude Code's /goal command: file-based progress state, transcript-checkable completion conditions, the 4000-char limit, subagent delegation, and an adversarial review gate. Includes templates and a validator script.",
+      "category": "workflow",
+      "tags": ["goal", "long-running", "resumable", "automation", "templates"]
+    }
+  ]
+}

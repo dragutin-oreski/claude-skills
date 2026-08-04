@@ -1,0 +1,7 @@
+{
+  "name": "calling-codex",
+  "description": "Delegate tasks to OpenAI Codex from Claude Code via the codex MCP server, with the sandbox-nesting pitfall and TLS/CA gotchas already solved.",
+  "version": "0.1.0",
+  "author": { "name": "Dragutin Oreski", "email": "dragutin@megi.ai" },
+  "keywords": ["codex", "openai", "mcp", "delegation"]
+}

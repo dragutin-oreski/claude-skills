@@ -1,0 +1,7 @@
+{
+  "name": "goal-prompts",
+  "description": "Write resumable /goal prompts for Claude Code: templates, a validator script, and the mechanics (transcript-only evaluator, file-based state, 4000-char limit) baked in.",
+  "version": "0.1.0",
+  "author": { "name": "Dragutin Oreski", "email": "dragutin@megi.ai" },
+  "keywords": ["goal", "resumable", "long-running", "templates"]
+}
