@@ -16,11 +16,14 @@ use on a multi-repo clinical health platform and generalized for any project.
 ### As plugins (recommended)
 
 ```
-/plugin marketplace add <your-github-user>/claude-skills
+/plugin marketplace add dragutin-oreski/claude-skills
 /plugin install explain-diff@claude-skills
 /plugin install calling-codex@claude-skills
 /plugin install goal-prompts@claude-skills
 ```
+
+Plugin names and skill names differ in one case: installing the **goal-prompts**
+plugin gives you the **writing-goal-prompts** skill.
 
 ### Manual copy
 
@@ -28,13 +31,15 @@ Copy any `plugins/<name>/skills/<skill>/` directory into your project's
 `.claude/skills/` (per-project) or `~/.claude/skills/` (everywhere):
 
 ```bash
-cp -r plugins/explain-diff/skills/explain-diff ~/.claude/skills/
+mkdir -p ~/.claude/skills
+cp -R plugins/explain-diff/skills/explain-diff ~/.claude/skills/
 ```
 
 ## Usage
 
 - `/explain-diff TICKET-123` (or "explain this branch/diff") — produces the explainer
-  page and publishes it as a private Artifact (or saves the HTML locally).
+  as a local HTML page; where the Artifact tool is available it also publishes it as a
+  private Artifact.
 - "Ask codex for a second opinion on this change" — invokes `calling-codex`.
 - "Write a goal prompt for migrating X" — invokes `writing-goal-prompts`, which produces
   a validated `GOAL.md` you paste after `/goal`.

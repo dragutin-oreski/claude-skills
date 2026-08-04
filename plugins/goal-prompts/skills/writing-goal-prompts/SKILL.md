@@ -52,8 +52,9 @@ Everything below exists because of how `/goal` actually works. Do not skip these
    elements (progress-file-first, resume/continue, turn counter, end-of-turn surfacing,
    DONE-WHEN, subagents, evidence, boundaries). Fix every FAIL; review the WARNs.
 5. **Review** (the user usually wants this): have a second model review it adversarially —
-   e.g. Codex via the `calling-codex` skill (shipped alongside this one) — and optionally
-   a fresh subagent. Apply the findings, then re-validate.
+   e.g. Codex via the `calling-codex` skill (a separate plugin in this marketplace), or any
+   other model you can reach — and optionally a fresh subagent. Apply the findings, then
+   re-validate.
 6. **Run it:** `/goal <paste the contents of GOAL.md>`. Pair with auto mode so each turn
    runs unattended. **To resume after any stop, send the same `/goal` text again.**
 

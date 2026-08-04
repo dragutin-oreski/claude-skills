@@ -1,6 +1,6 @@
 <!--
   Fill every <PLACEHOLDER>, delete these comments, keep it ASCII-only and <=4000 chars,
-  then validate:  bash .claude/skills/writing-goal-prompts/check-goal.sh <this-file>
+  then validate:  bash <writing-goal-prompts skill dir>/check-goal.sh <this-file>
   Paste the result after `/goal`. To resume later, send the exact same text again.
   Drop the PLAYBOOK/BRIEF sentence if the whole spec fits in this file.
 -->
@@ -17,7 +17,7 @@ DELIVERABLES (all under <STATE-DIR>/, non-stub):
 
 METHOD: ultrathink. Delegate independent investigation to subagents and keep working while they run (use cheaper models for grunt work like search/link-following/extraction); keep orchestrator context lean so resumes are cheap. Every ~<N> phases, spawn a fresh verifier subagent to check the deliverables against the spec. Ground every progress claim in a tool result; if a fact isn't verified, say so; never report a file or fact as confirmed without evidence. You run unattended across turns: for reversible actions that follow from the spec, proceed without asking; pause only for a genuinely user-only decision and record it in PROGRESS.md. Don't end a turn on a promise; do the work now.
 
-REVIEW GATE: <DELIVERABLE(S) TO REVIEW> must be reviewed by BOTH (a) a second model (e.g. Codex via the calling-codex skill) with full access, adversarial on correctness, feasibility, and gaps; and (b) a fresh subagent that verifies claims against the source and flags anything unfounded. Resolve every finding and record it in REVIEW.md; if a review forces material change, re-review that part.
+REVIEW GATE: <DELIVERABLE(S) TO REVIEW> must be reviewed by BOTH (a) a second model (e.g. Codex via the calling-codex skill, if available) with enough read access to verify the deliverables against the source, adversarial on correctness, feasibility, and gaps; and (b) a fresh subagent that verifies claims against the source and flags anything unfounded. Resolve every finding and record it in REVIEW.md; if a review forces material change, re-review that part.
 
 END EACH TURN by printing the PROGRESS.md checklist (item-by-item done/not-done) and the cumulative turn count. When complete, ALSO print one line of evidence per deliverable (path + section headings, so non-stub is demonstrable)<and REVIEW.md's unresolved-finding count>.
 

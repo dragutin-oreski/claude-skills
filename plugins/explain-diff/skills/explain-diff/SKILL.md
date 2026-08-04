@@ -15,6 +15,11 @@ Input (args): one or more ticket keys (Jira / GitHub / Linear), a branch, or a c
 range. One explainer per ticket/change; for a series, number them ("ticket 2 of 5")
 and keep one visual design across the series.
 
+The full actor treatment (your side / counterpart / client) is for changes that span
+repos or teams. **For a single-repo change, drop the counterpart**: no actor lanes,
+verdict cards become change / tests / blocking gate / posture, and the walkthrough
+needs no counterpart step.
+
 ## Non-negotiable ground rules
 
 1. **Verify before claiming.** Every "done / landed / missing / compatible" statement
@@ -50,7 +55,7 @@ and keep one visual design across the series.
    repo/your side, plum = counterpart, grey = client).
    Section order is fixed (Litt structure):
    - **Header + verdict cards** (4 cards: your side / their side / blocking gate /
-     posture). Lead with the outcome.
+     posture; single-repo: change / tests / gate / posture). Lead with the outcome.
    - **01 Background** — how the system worked *before*; actor lanes if multi-service.
    - **02 Intuition** — the goal in plain language + the wire/data shape before→after
      with small concrete payloads.
@@ -60,7 +65,7 @@ and keep one visual design across the series.
      of a store/thread), *behavior-judge* (input → verdict → what user receives).
    - **04 Literate walkthrough** — the diff grouped by **execution order**, not file
      order; 2–4 sentences of *why* before each excerpt; real code, trimmed; one step
-     for the counterpart's side. Include review history (what adversarial review
+     for the counterpart's side (cross-repo only). Include review history (what adversarial review
      caught) and any decision consciously held against review.
    - **05 Readiness** — numbered deploy/integration rail with per-step owner pills and
      blocked/ready/open states; then "loose ends" (stale tickets, unposted contracts,
@@ -69,10 +74,13 @@ and keep one visual design across the series.
      subtleties (not trivia); answers in `<details>` explaining why right AND why the
      tempting wrong answer is wrong.
    - **Footer** — sources with commit hashes, refs + dates, suite numbers.
-5. **Publish** with the Artifact tool (private by default): one emoji favicon per
-   ticket (stable across republishes), title `TICKET-123 · <short name>`, series
-   numbering in the eyebrow. No Artifact tool available? Save the HTML and open it
-   in a browser instead.
+5. **Deliver the page.** The guaranteed path: save the HTML locally and tell the user
+   to open it in a browser — when saving locally, wrap the content in standard HTML5
+   scaffolding (`<!doctype html>`, `<head>` with charset + viewport, `<body>`), which
+   the template deliberately omits. Where the Artifact tool is available, also publish
+   it as a private Artifact (content as-is, no scaffolding — the tool wraps it): one
+   emoji favicon per ticket (stable across republishes), title `TICKET-123 · <short
+   name>`, series numbering in the eyebrow.
 6. **Chat summary** (the artifact link is not enough): TL;DR verdict first, then goal /
    their side / your side (with verification evidence) / open actions, one insight
    worth keeping, and the offer to proceed to the next ticket. Keep it shorter than

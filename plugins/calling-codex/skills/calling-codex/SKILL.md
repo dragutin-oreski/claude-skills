@@ -20,12 +20,17 @@ Requires the `codex` CLI installed and logged in (`codex login`). Register it
 as an MCP server — the subcommand must be `mcp-server`:
 
 ```bash
-claude mcp add codex -e SSL_CERT_FILE=/etc/ssl/cert.pem -- codex mcp-server
+claude mcp add codex -- codex mcp-server
 ```
 
-The `SSL_CERT_FILE` matters on macOS: without an explicit root-CA bundle,
-Codex's TLS handshake to its backend fails ("no native root CA certificates
-found"). Diagnose with `codex doctor`.
+If Codex later fails with "no native root CA certificates found" or streams
+disconnect mid-call (diagnose with `codex doctor`), it can't find a root-CA
+bundle — re-register with one passed explicitly:
+
+```bash
+claude mcp remove codex -s local
+claude mcp add codex -e SSL_CERT_FILE=/etc/ssl/cert.pem -- codex mcp-server
+```
 
 ## Invocation rules
 
@@ -49,15 +54,32 @@ found"). Diagnose with `codex doctor`.
 
 ## Call it
 
+**Inside a sandboxed Claude Code (macOS)** — full access is required (rule 2;
+Claude Code's outer sandbox is the boundary):
+
 ```
 mcp__codex__codex(
   prompt: "<the task for codex>",
   sandbox: "danger-full-access",
-  approval-policy: "never"
+  approval-policy: "never",
   // no `model` → default model
   // cwd: "<abs path>" when codex should operate on files
 )
 ```
+
+**Unsandboxed Claude Code, or unsure** — there is no outer boundary, so keep
+Codex confined:
+
+```
+mcp__codex__codex(
+  prompt: "<the task for codex>",
+  sandbox: "workspace-write",
+  // cwd: "<abs path>" when codex should operate on files
+)
+```
+
+If the workspace-write call fails with `sandbox-exec: sandbox_apply: Operation
+not permitted`, you *are* inside a sandbox — switch to the first form.
 
 Returns JSON: `{"threadId": "...", "content": "<codex's reply>"}`.
 
@@ -75,7 +97,9 @@ mcp__codex__codex-reply(
 ## Connectivity check (CLI path — secondary)
 
 To confirm Codex is reachable without going through the MCP tool (useful when
-the MCP status shows "Failed to connect"):
+the MCP status shows "Failed to connect"). Run it from a plain terminal — its
+default `read-only` mode is exactly what fails inside a sandboxed Claude Code
+session (rule 2); in that case run it with `CODEX_SMOKE_SANDBOX=danger-full-access`:
 
 ```bash
 bash smoke.sh   # in this skill's directory
@@ -100,5 +124,8 @@ Other gotchas:
   current session keeps the *old* process/env until you do.
 - **`content` is JSON, not prose.** Parse out the `content` field; don't hand
   the raw `{"threadId":...}` string to the user.
-- **Long tasks:** the call blocks until Codex finishes or the stream drops;
-  just retry on a transient `stream disconnected`.
+- **Long tasks:** the call blocks until Codex finishes or the stream drops.
+  On a transient `stream disconnected`, don't blindly re-send a mutating
+  prompt — Codex may already have changed files. Check what landed on disk
+  first, then continue via `codex-reply` on the same thread (or re-send only
+  if the prompt is idempotent).

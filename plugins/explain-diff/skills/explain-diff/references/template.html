@@ -74,7 +74,7 @@
   .pill-crit { background: var(--crit-soft); color: var(--crit); }
   .pill-ours { background: var(--ours-soft); color: var(--ours); }
   .pill-theirs   { background: var(--theirs-soft); color: var(--theirs); }
-  .pill-mob  { background: var(--client-soft); color: var(--client); }
+  .pill-client { background: var(--client-soft); color: var(--client); }
 
   .verdict { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
     gap: 10px; margin: 22px 0 0; }
@@ -279,9 +279,14 @@
     });
     document.getElementById("why").textContent = s.why;
     document.getElementById("slot-in").textContent = s.input;
-    document.getElementById("slot-badges").innerHTML = s.badges.map(function (b) {
-      return '<span class="routebadge ' + b[0] + '">' + b[1] + "</span>";
-    }).join("");
+    var badges = document.getElementById("slot-badges");
+    badges.textContent = "";
+    s.badges.forEach(function (b) {
+      var span = document.createElement("span");
+      span.className = "routebadge " + b[0];
+      span.textContent = b[1];
+      badges.appendChild(span);
+    });
     document.getElementById("slot-out").textContent = s.out;
   }
   SCENARIOS.forEach(function (s, i) {

@@ -26,4 +26,6 @@ spot-verify the load-bearing baseline facts against the source (don't trust a da
 - End each turn by printing the PROGRESS.md checklist + cumulative turn count (the /goal evaluator only sees the transcript).
 
 ## PROGRESS.md template
-See templates/PROGRESS.template.md.
+Copy `PROGRESS.template.md` (next to this template in the skill's `templates/`
+directory) into the state dir alongside this playbook, or let the goal create
+PROGRESS.md from the phase list above on its first turn.
