@@ -1,6 +1,6 @@
 ---
 name: explain-diff
-description: Turn a ticket, branch, or commit range into a visual HTML review explainer (published as a private Artifact) — background before diff, one interactive walker for the core mechanism, a literate walkthrough in execution order, a cross-repo readiness verdict, and a 5-question sign-off quiz. Use when asked to "explain this diff/ticket/branch", "make an explainer", "explain-diff TICKET-123", or to prepare a change so a human can review and truly understand it (Geoffrey Litt's "explain diff" / speed-regulator pattern).
+description: Turn a ticket, branch, or commit range into a visual HTML review explainer (saved locally; also published as a private Artifact where available) — background before diff, one interactive walker for the core mechanism, a literate walkthrough in execution order, a readiness verdict, and a 5-question sign-off quiz. Use when asked to "explain this diff/ticket/branch", "make an explainer", "explain-diff TICKET-123", or to prepare a change so a human can review and truly understand it (Geoffrey Litt's "explain diff" / speed-regulator pattern).
 ---
 
 # explain-diff
@@ -81,8 +81,8 @@ needs no counterpart step.
    it as a private Artifact (content as-is, no scaffolding — the tool wraps it): one
    emoji favicon per ticket (stable across republishes), title `TICKET-123 · <short
    name>`, series numbering in the eyebrow.
-6. **Chat summary** (the artifact link is not enough): TL;DR verdict first, then goal /
-   their side / your side (with verification evidence) / open actions, one insight
+6. **Chat summary** (the page alone is not enough): TL;DR verdict first, then goal /
+   your side / their side if cross-repo (with verification evidence) / open actions, one insight
    worth keeping, and the offer to proceed to the next ticket. Keep it shorter than
    the page — the page carries the detail.
 7. **Notes.** If the project keeps per-ticket memory/notes, record anything durable

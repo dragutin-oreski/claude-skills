@@ -112,7 +112,7 @@ Expected tail: `Logged in using ChatGPT` and a final line `smoke-ok`.
 | Symptom | Fix |
 |---|---|
 | `/mcp` shows `Failed to reconnect to codex: -32000` | Registered with the wrong subcommand — must be `codex mcp-server` (Codex *as* a server), not `codex mcp` (which only manages other MCP servers). `claude mcp remove codex -s local`, then re-add as in Setup. |
-| `stream disconnected before completion ... backend-api` | Missing CA bundle — ensure `SSL_CERT_FILE=/etc/ssl/cert.pem` in the registration. |
+| `stream disconnected before completion ... backend-api` | If `codex doctor` shows a certificate error ("no native root CA certificates found"), re-register with `SSL_CERT_FILE=/etc/ssl/cert.pem`. Otherwise it's likely transient — see the long-tasks note before retrying. |
 | `codex doctor` → `reachability ... connect failed` | Same CA issue; also check VPN/proxy/firewall. |
 | Tool call fails `InputValidationError` | Schemas not loaded — run the `ToolSearch select:` query first. |
 | `sandbox-exec: sandbox_apply: Operation not permitted` (Codex can't run/read anything) | Nested sandbox — you called it with `read-only`/`workspace-write` inside a sandboxed Claude Code. Switch to `sandbox: "danger-full-access"` (rule 2). |

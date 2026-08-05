@@ -72,7 +72,7 @@ Everything below exists because of how `/goal` actually works. Do not skip these
   user-only decisions; don't end a turn on a promise.
 - **Transcript-checkable completion** — end-of-turn checklist surfacing; a cumulative turn
   counter in `PROGRESS.md` so the turn cap survives resumes; a DONE-WHEN provable from the turn.
-- **Review gate** — a second model (full access) + a fresh subagent, findings resolved in `REVIEW.md`.
+- **Review gate** — a second model with enough access to verify the deliverables + a fresh subagent, findings resolved in `REVIEW.md`.
 
 ## Gotchas
 

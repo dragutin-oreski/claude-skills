@@ -1,7 +1,8 @@
 <title>SLOT: TICKET-123 · short name</title>
 <!-- explain-diff series template. Copy, fill SLOT comments, delete unused walker slots.
      Design system: paper/teal/plum, Charter body + Avenir headings, token-driven dark mode.
-     Actor colors: --ours (teal) = this repo/your side · --theirs (plum) = counterpart · --client (grey) = client. -->
+     Actor colors: ours (teal) = this repo/your side · theirs (plum) = counterpart · client (grey) = end client.
+     Single-repo change? Drop the counterpart: no lanes, no theirs pills, cards become change/tests/gate/posture. -->
 <style>
   :root {
     --paper: #FBFBF9; --ink: #22302F; --muted: #5C6B69; --line: #E3E7E4;
@@ -191,7 +192,7 @@
   <p class="prose" style="font-size:1.05rem; color:var(--muted);">SLOT: 2–3 sentence dek — what this is and why it matters.</p>
 
   <div class="verdict">
-    <!-- 4 cards: your side / their side / blocking gate / posture. pill classes: pill-good|warn|crit -->
+    <!-- 4 cards: your side / their side / blocking gate / posture (single-repo: change / tests / gate / posture). pill classes: pill-good|warn|crit -->
     <div class="verdict-card"><div class="verdict-label">SLOT label</div>
       <span class="pill pill-good">SLOT verdict</span>
       <p style="font-size:0.83rem; margin:8px 0 0;">SLOT: one-line evidence.</p></div>
@@ -231,12 +232,13 @@
     <div class="prose"><p>SLOT: the why, 2–4 sentences, before the code.</p></div>
 <pre><code>SLOT: real trimmed excerpt — escape &amp; &lt; &gt;</code></pre>
   </div>
-  <!-- repeat steps; include one plum (pill-theirs) step for the counterpart's side -->
+  <!-- repeat steps; cross-repo only: include one plum (pill-theirs) step for the counterpart's side -->
 </section>
 
 <section>
   <div class="eyebrow"><span class="secnum">05</span> · Readiness</div>
   <h2>SLOT: is it deployable, in what order</h2>
+  <!-- owner pills: pill-ours = you, pill-theirs = counterpart (cross-repo only; single-repo rails use pill-ours throughout) -->
   <ol class="rail">
     <li class="blocked"><span class="railtitle">SLOT step</span> <span class="pill pill-theirs">owner</span>
       <p>SLOT: what and why blocked.</p></li>
