@@ -10,6 +10,7 @@ use on a multi-repo clinical health platform and generalized for any project.
 | [`explain-diff`](plugins/explain-diff/skills/explain-diff/SKILL.md) | Turns a ticket, branch, or commit range into a **visual HTML review explainer**: background before diff, one interactive walker for the change's core mechanism, a literate walkthrough in *execution* order, a cross-repo readiness verdict, and a 5-question sign-off quiz. Implements Geoffrey Litt's "explain diff" / speed-regulator pattern — don't pass the code along until you can pass the quiz. Ships with the HTML design template. |
 | [`calling-codex`](plugins/calling-codex/skills/calling-codex/SKILL.md) | Delegates tasks to OpenAI Codex from inside Claude Code via the `codex` MCP server. Has the painful parts already solved: the `codex mcp-server` vs `codex mcp` registration trap, the macOS **nested-sandbox** failure (why `read-only` makes Codex file-blind and when `danger-full-access` is actually the safe choice), the root-CA/TLS fix, multi-turn threads, and a smoke test. |
 | [`writing-goal-prompts`](plugins/goal-prompts/skills/writing-goal-prompts/SKILL.md) | Authors **resumable** prompts for Claude Code's `/goal` command. Encodes the four mechanics that dictate the design (the evaluator only sees the transcript; state must live in files; the 4000-char limit; resume resets counters) plus templates and a validator script, so long-running goals survive interruption instead of restarting. |
+| [`design-loop`](plugins/design-loop/skills/design-loop/SKILL.md) | Designs (never runs) **engineered loops** for long-running agent work — the "loop engineering" pattern as a method. Produces a three-file *loop pack*: a **contract** (outcome as evidence not activity, four-class decision rights with delegable-but-default-queued outward actions, budgets a fresh dispatcher can enforce from disk, five terminal stop reasons, typed gate effects), a crash-safe **ledger** (wall-clock lease lock, reserve-first dispatch, dirty orphans quarantined never deleted), and a **tick prompt**. Ships a validator (`check-loop.sh`) and a deterministic HTML pack renderer (`render_pack.py`). Hardened by two independent adversarial reviews — five blockers found and folded before v1 ever ran. |
 
 ## Install
 
@@ -20,6 +21,7 @@ use on a multi-repo clinical health platform and generalized for any project.
 /plugin install explain-diff@claude-skills
 /plugin install calling-codex@claude-skills
 /plugin install goal-prompts@claude-skills
+/plugin install design-loop@claude-skills
 ```
 
 Plugin names and skill names differ in one case: installing the **goal-prompts**

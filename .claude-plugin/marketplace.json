@@ -26,6 +26,13 @@
       "description": "Author resumable prompts for Claude Code's /goal command: file-based progress state, transcript-checkable completion conditions, the 4000-char limit, subagent delegation, and an adversarial review gate. Includes templates and a validator script.",
       "category": "workflow",
       "tags": ["goal", "long-running", "resumable", "automation", "templates"]
+    },
+    {
+      "name": "design-loop",
+      "source": "./plugins/design-loop",
+      "description": "Design (never run) engineered loops for long-running agent work — a loop contract (outcome + evidence, decision rights, budgets, stop policy, typed gate effects), a crash-safe ledger (lease lock, reserve-first dispatch, quarantine rule), and a tick prompt, with a validator script and a deterministic HTML pack renderer. Loop engineering as a method, not a vibe.",
+      "category": "workflow",
+      "tags": ["loop-engineering", "autonomous", "dispatcher", "ledger", "long-running", "templates"]
     }
   ]
 }

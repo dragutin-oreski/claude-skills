@@ -1,0 +1,7 @@
+{
+  "name": "design-loop",
+  "description": "Design engineered loops for long-running agent work: a loop contract, ledger schema, and tick prompt with decision rights, stop policies, and budgets baked in — plus a validator and an HTML pack renderer.",
+  "version": "0.1.0",
+  "author": { "name": "Dragutin Oreski", "email": "dragutin@megi.ai" },
+  "keywords": ["loop-engineering", "autonomous", "dispatcher", "ledger", "long-running"]
+}
