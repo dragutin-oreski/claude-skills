@@ -94,6 +94,24 @@ mcp__codex__codex-reply(
 )
 ```
 
+## Asking for a review
+
+When the call is a review (a plan, a diff, a document), say it is read-only — full access
+means Codex *can* write — and end the prompt with this output format, so the findings come
+back usable in one pass:
+
+```
+Read-only review: do NOT edit any file.
+Report BLOCKERS first: problems you would block on. For each: where (file:line),
+why it is wrong, and how to show it fails (a command, an input, or a scenario).
+Then MINOR: smaller issues, one line each, with the fix.
+Only realistic cases; no style nits unless they cause a real problem; do not restate the plan.
+End with one line: APPROVE, APPROVE-WITH-FIXES, or REJECT.
+```
+
+Before the format, list the files Codex should read and the specific questions you want
+answered; a review with no questions tends to come back generic.
+
 ## Connectivity check (CLI path — secondary)
 
 To confirm Codex is reachable without going through the MCP tool (useful when
