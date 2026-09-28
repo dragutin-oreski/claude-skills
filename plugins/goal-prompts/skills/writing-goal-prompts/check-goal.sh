@@ -35,6 +35,7 @@ has()    { printf '%s' "$content" | grep -iqE "$1"; }
 chk()    { if has "$2"; then pass "$1"; else failed "$1 (pattern: /$2/i)"; fi; }
 chkw()   { if has "$2"; then pass "$1"; else warned "$1 (pattern: /$2/i)"; fi; }
 absent() { if has "$2"; then failed "$1 (found pattern that should be absent: /$2/)"; else pass "$1"; fi; }
+absentw(){ if has "$2"; then warned "$1 (found: /$2/i)"; else pass "$1"; fi; }
 
 echo "Checking: $file"
 echo
@@ -58,6 +59,7 @@ chk  "explicit, transcript-verifiable DONE-WHEN"        'done when|complete when
 chkw "delegates independent work to subagents"          'subagent'
 chkw "grounds progress claims in evidence"              'evidence|tool result|verify'
 chkw "states boundaries (what NOT to do)"               'do not|do NOT|only:|read-only|planning only'
+absentw "no thinking keyword (set effort at launch: claude --effort)" 'ultrathink|think (hard|harder|carefully|deeply)'
 
 echo
 if [ "$fail" -gt 0 ]; then

@@ -1,6 +1,6 @@
 ---
 name: writing-goal-prompts
-description: Write a resumable prompt for Claude Code's /goal command. Use when asked to "write a goal prompt", "create a /goal", "author a goal/effort prompt", "set up a resumable long-running goal", or "make a goal that survives interruption". Bakes in the 4000-char limit, file-based progress + resumability, ultrathink, subagent delegation, and the adversarial review gate so you don't retype them.
+description: Write a resumable prompt for Claude Code's /goal command. Use when asked to "write a goal prompt", "create a /goal", "author a goal/effort prompt", "set up a resumable long-running goal", or "make a goal that survives interruption". Bakes in the 4000-char limit, file-based progress + resumability, a launch-time reasoning-effort choice, subagent delegation, and the adversarial review gate so you don't retype them.
 ---
 
 # Writing /goal prompts
@@ -35,6 +35,34 @@ Everything below exists because of how `/goal` actually works. Do not skip these
    `PLAYBOOK.md`/`BRIEF.md` that the goal reads. Multibyte chars (— → ×) cost 3 bytes each,
    so prefer ASCII to stay byte-safe too.
 
+## Reasoning effort is set at launch, not in the text
+
+`/goal` has no effort parameter: every turn runs at the session's effort level. So the
+level is a launch choice, recorded in `PROGRESS.md`, never a keyword in the goal text.
+
+- **Launch:** `claude --effort xhigh`, then `/goal <paste>`. If you start Claude Code through
+  a wrapper script or shell function, make sure it forwards its arguments to `claude`.
+- **Resume:** `claude --effort xhigh --resume` (or `--continue`), so a restored goal never
+  runs a turn at the default level. `/effort xhigh` inside a running session also works,
+  but lasts only for that session.
+- `CLAUDE_CODE_EFFORT_LEVEL` in the environment overrides both; make sure it is unset.
+- Without a flag, the session uses your settings default (`effortLevel` / `modelSettings`
+  in `~/.claude/settings.json`, or the model's built-in default).
+
+Which level (judgment, not from the docs):
+
+| Run shape | Level |
+|---|---|
+| Mechanical, finish line is a test or checker (migrations, bulk edits, extraction) | `high` |
+| Planning, design, adversarial review, safety-critical content, unfamiliar code | `xhigh` |
+| Short runs that need the hardest reasoning; no documented cost guidance, so not the default for multi-hour goals | `max` |
+| `low` / `medium` | not recommended for long `/goal` work |
+
+**Do not put `ultrathink` or "think hard/carefully" in the goal text.** Current models think
+before every reply anyway, and `ultrathink` in a goal condition fires on every turn as an
+invisible boost on top of the chosen level, so nobody knows the real depth of a turn.
+`check-goal.sh` warns when it finds one.
+
 ## Workflow
 
 1. **Copy the template** from this skill's directory into your working state dir:
@@ -42,29 +70,35 @@ Everything below exists because of how `/goal` actually works. Do not skip these
 2. **Fill every `<PLACEHOLDER>`** and delete the guidance comments. The fixed scaffolding
    (resumability protocol, method, review gate, end-of-turn surfacing, turn cap) is already
    written — you only supply the goal, boundaries, deliverables, and DONE condition.
-3. **For a large effort**, also fill `PLAYBOOK.template.md` (detailed spec) and write a
+3. **Pick the reasoning effort** (section above). Copy the skill's
+   `templates/PROGRESS.template.md` to `<STATE-DIR>/PROGRESS.md` and fill its phases and the
+   `Reasoning effort` line before launch (the goal only creates `PROGRESS.md` if it is missing,
+   so pre-creating it is how the level gets recorded).
+4. **For a large effort**, also fill `PLAYBOOK.template.md` (detailed spec) and write a
    `BRIEF.md` of grounded facts, so the 4000-char condition can stay lean.
-4. **Validate** — this is the primary check, run it every time:
+5. **Validate** — this is the primary check, run it every time:
    ```bash
    bash <this-skill-dir>/check-goal.sh <STATE-DIR>/GOAL.md
    ```
    It reports character + byte count vs 4000, flags non-ASCII, and greps for the required
    elements (progress-file-first, resume/continue, turn counter, end-of-turn surfacing,
    DONE-WHEN, subagents, evidence, boundaries). Fix every FAIL; review the WARNs.
-5. **Review** (the user usually wants this): have a second model review it adversarially —
+6. **Review** (the user usually wants this): have a second model review it adversarially —
    e.g. Codex via the `calling-codex` skill (a separate plugin in this marketplace), or any
    other model you can reach — and optionally a fresh subagent. Apply the findings, then
    re-validate.
-6. **Run it:** `/goal <paste the contents of GOAL.md>`. Pair with auto mode so each turn
-   runs unattended. **To resume after any stop, send the same `/goal` text again.**
+7. **Run it:** start the session with `claude --effort <level>`, then
+   `/goal <paste the contents of GOAL.md>`. Pair with auto mode so each turn runs unattended.
+   **To resume after any stop:** `claude --effort <level> --resume`, and send the same `/goal`
+   text again if the goal is no longer active.
 
 ## What the template bakes in (so you stop retyping it)
 
 - **Resumability contract** — read `PROGRESS.md` first; resume from the first unchecked
   item; read existing deliverables before editing; "must CONTINUE, never restart";
   idempotent increments; append evidence + tick + increment the cumulative turn counter.
-- **`ultrathink`** — a real Claude Code thinking trigger; kept in the condition so it fires
-  each turn.
+- **Effort is a launch choice, not template text** — the level lives in `PROGRESS.md` and on
+  the `claude --effort` command line; the template has no thinking keyword.
 - **Subagent delegation** — delegate independent work, keep working while they run, cheaper
   models for grunt work, keep orchestrator context lean; a fresh verifier subagent every ~N phases.
 - **No fabrication** — ground every claim in a tool result; say so when unverified.

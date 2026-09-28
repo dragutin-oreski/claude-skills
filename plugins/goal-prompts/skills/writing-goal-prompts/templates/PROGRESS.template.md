@@ -1,6 +1,7 @@
 # <Effort> — Progress
 
 Updated: <date>  ·  Turn: <n>/<cap> (cumulative — increment every turn, survives resumes)  ·  Turn note: <one line>
+Reasoning effort: <low|medium|high|xhigh|max> - launch and every resume with claude --effort <level>; the goal cannot set or see its own effort.
 
 - [ ] Phase 0 — Orient & resume (spot-verify the baseline)
 - [ ] Phase 1 — <deliverable / milestone>

@@ -160,6 +160,8 @@ on their recorded state; it never performs or simulates them.
 - [ ] Readiness preconditions verified per item: <READINESS ITEMS>
       <!-- databases, ports, live sessions — missing = that item starts blocked,
            never improvised around. -->
+- [ ] Reasoning effort chosen for the dispatcher session and set on the command line
+      (claude --effort followed by the chosen level), including on every resume.
 - [ ] `check-loop.sh` PASS on all three loop-pack files.
 - [ ] Review gate closed: Codex + fresh subagent, no blocking finding.
 - [ ] <HUMAN> approved this contract (this line initialed: ____).
