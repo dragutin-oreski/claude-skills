@@ -50,6 +50,19 @@ echo any-probe-failure > ~/.config/codex-job/allow-full                # also wh
 
 `$XDG_CONFIG_HOME` is honoured instead of `~/.config` when set.
 
+Your outer sandbox must let the agent **read** the allow file. Many sandbox profiles close
+most of `~/.config`. Then the file is invisible from inside, and `start` keeps refusing even
+after you created it. A quick check from inside the sandboxed session: `ls ~/.config/codex-job`
+says "Operation not permitted". Grant read access to that one file and nothing else, and never
+write access, or the agent could create its own permission. For a macOS Seatbelt profile, add
+this after the rule that closes `~/.config`, since the last matching rule wins:
+
+```scheme
+(allow file-read* (literal "/Users/YOU/.config/codex-job/allow-full"))
+```
+
+A profile is fixed when the sandbox starts, so restart the sandboxed session afterwards.
+
 ## Is full access safe?
 
 Only when something else contains Codex. Inside a sandboxed Claude Code, the outer sandbox
