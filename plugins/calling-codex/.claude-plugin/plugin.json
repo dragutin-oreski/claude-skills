@@ -1,7 +1,6 @@
 {
   "name": "calling-codex",
   "description": "Let Claude Code call OpenAI Codex as a background job — reviews, adversarial reviews and worktree-isolated tasks — with time limits, cancel, follow-ups on the same thread, and a guard against the nested-sandbox trap that makes Codex file-blind.",
-  "version": "0.2.0",
   "author": { "name": "Dragutin Oreski", "email": "dragutin@megi.ai" },
   "keywords": ["codex", "openai", "code-review", "adversarial-review", "second-opinion", "delegation"]
 }
