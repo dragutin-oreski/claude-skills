@@ -1,0 +1,609 @@
+#!/usr/bin/env bash
+# codex-job — run OpenAI Codex CLI as a background job that an agent can start, wait on,
+# read, cancel and continue, with a hard time limit. Works with macOS /bin/bash 3.2 and Linux.
+#
+#   codex-job start --prompt FILE [--mode review|adversarial|task] [--cd DIR] [--watch DIR]...
+#                   [--name NAME] [--timeout SEC] [--sandbox auto|read-only|workspace-write]
+#                   [--model M] [--effort E] [--allow-main]
+#   codex-job wait JOB [--max SEC]     # blocks up to SEC (default 540), then reports
+#   codex-job status [JOB]             # one job in full, or one line per job
+#   codex-job result JOB               # Codex's final message
+#   codex-job cancel JOB
+#   codex-job resume JOB --prompt FILE [--timeout SEC]   # new job on the same Codex thread
+#
+# JOB is the `job:` path that start prints (or its directory name). Jobs live in
+# $CODEX_JOBS_DIR (default ${TMPDIR:-/tmp}/codex-jobs). Output is `key: value` lines and the
+# first line is always `state: <state>`, one of: started running done failed timed-out
+# cancelled. Exit code 0 = started/running/done, 1 = failed/timed-out/cancelled, 2 = usage.
+#
+# Sandbox: by default Codex runs in its own sandbox (read-only for reviews, workspace-write
+# for tasks). Inside another sandbox — such as a sandboxed Claude Code on macOS — that sandbox
+# cannot start, and Codex would be unable to read or run anything. Then, and only then (the
+# probe fails with the nested-sandbox error), codex-job runs Codex with full access, if a human
+# has allowed it with either
+#   touch ~/.config/codex-job/allow-full        or   CODEX_JOB_ALLOW_FULL=1 in the environment
+# Any other probe failure is refused, unless the allow file contains the line
+# `any-probe-failure` (for containers where the human knows the container is the boundary).
+# An agent must never create, edit or set any of these itself.
+#
+# Other environment: CODEX_BIN (default: codex), CODEX_JOBS_DIR.
+set -u
+
+SCRIPT="$0"
+case "$SCRIPT" in /*) ;; *) SCRIPT="$PWD/$SCRIPT" ;; esac
+HERE="$(cd "$(dirname "$SCRIPT")" && pwd)"
+PROMPTS="$HERE/../prompts"
+CODEX="${CODEX_BIN:-codex}"
+JOBS_DIR="${CODEX_JOBS_DIR:-${TMPDIR:-/tmp}/codex-jobs}"
+JOBS_DIR="${JOBS_DIR%/}"
+case "$JOBS_DIR" in /*) ;; *) JOBS_DIR="$PWD/$JOBS_DIR" ;; esac   # job paths must not depend on --cd
+ALLOW_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/codex-job/allow-full"
+START_GRACE=60          # seconds for Codex to report a thread before the job counts as failed
+DEFAULT_TIMEOUT=1800
+DEFAULT_WAIT=540        # stays under Claude Code's 10-minute Bash limit
+
+# Some machines have no default root-CA bundle for Codex (TLS fails with
+# "no native root CA certificates found"); /etc/ssl/cert.pem fixes it and is harmless elsewhere.
+if [ -z "${SSL_CERT_FILE:-}" ] && [ -f /etc/ssl/cert.pem ]; then export SSL_CERT_FILE=/etc/ssl/cert.pem; fi
+
+fail_now() { echo "state: failed"; echo "error: $*"; exit 1; }
+num() { case "$1" in ''|*[!0-9]*) echo 0 ;; *) echo "$1" ;; esac; }   # never feed text to $(( ))
+need_value() { [ "$1" -ge 2 ] || { echo "$2 needs a value" >&2; exit 2; }; }
+one_line() {  # name value — job files store one value per line, so a newline would inject
+  case "$2" in *"
+"*|*"$(printf '\r')"*) echo "$1 must not contain line breaks" >&2; exit 2 ;; esac
+}
+usage() { sed -n '2,27p' "$SCRIPT" >&2; exit 2; }
+now() { date +%s; }
+# stamp FILE: write the current time atomically (a reader never sees a half-written file).
+stamp() { now > "$1.tmp.$$" && mv -f "$1.tmp.$$" "$1"; }
+
+# A job directory holds: meta (key: value lines), state, argv, prompt.md, events.jsonl,
+# stderr.log, result.md, exit_code, runner.pid, and tree.* fingerprints.
+meta_get() { sed -n "s/^$2: //p" "$1/meta" 2>/dev/null | tail -1; }
+state_get() { readlink "$1/final" 2>/dev/null || cat "$1/state" 2>/dev/null || echo unknown; }
+state_set() { echo "$2" > "$1/state.tmp.$$" && mv "$1/state.tmp.$$" "$1/state"; }
+# The first final state written wins; later attempts (a cancel racing a normal exit, say) are
+# ignored. Creating a symlink is atomic and fails if it exists, and its target IS the state, so
+# claiming and recording happen in one step: a crash cannot leave a claim without a state.
+finalize() {
+  ln -sn "$2" "$1/final" 2>/dev/null || return 1
+  stamp "$1/ended_at"; state_set "$1" "$2"
+}
+is_final() { case "$1" in done|failed|timed-out|cancelled) return 0 ;; *) return 1 ;; esac; }
+set_started() { [ -L "$1/final" ] || state_set "$1" started; }
+runner_pid() { cat "$1/runner.pid" 2>/dev/null; }
+alive() {  # is the runner (or, before it starts, the launcher) still running?
+  local p; p="$(runner_pid "$1")"
+  # Lock held = some job process lives, so the runner's number (= its group's) cannot have been
+  # reused; then kill -0 tells whether the runner itself is still there. Lock free = all gone.
+  if [ -n "$p" ] && [ -f "$1/alive.lock" ]; then ! lock_free "$1/alive.lock" && kill -0 "$p" 2>/dev/null; return; fi
+  [ -n "$p" ] || p="$(cat "$1/launcher.pid" 2>/dev/null)"
+  [ -n "$p" ] && kill -0 "$p" 2>/dev/null
+}
+# Any process of the job still running? The runner locks $job/alive.lock on a file descriptor
+# that Codex and everything it starts inherit, so the lock is held exactly as long as one of the
+# job's processes lives — and a process that merely reuses an old pid cannot hold it.
+lock_free() {  # file — 0 if nobody holds an exclusive lock on it
+  if command -v flock > /dev/null 2>&1; then flock -n -x "$1" true 2> /dev/null
+  else perl -MFcntl=:flock -e 'open(my $f, ">>", $ARGV[0]) or exit 2; exit(flock($f, LOCK_EX | LOCK_NB) ? 0 : 1)' "$1"; fi
+}
+#
+# Some programs close inherited descriptors for their children (Python's subprocess does), so
+# such a child escapes the lock while staying in the job's process group. The group itself is
+# therefore also checked — but a process-group number can be reused once the group is gone,
+# so it is trusted only within REAP_WINDOW seconds of the runner's last heartbeat. Process
+# numbers are handed out in sequence, so reuse within that window would take ~100k new
+# processes on macOS (and far more on Linux). Older than that, or a job made by an older
+# codex-job (no alive.lock), the number is never signalled; a warning names it instead.
+REAP_WINDOW=600
+recent() { [ $(( $(now) - $(num "$(cat "$1/heartbeat" 2>/dev/null)") )) -lt "$REAP_WINDOW" ]; }
+group_exists() { local p; p="$(runner_pid "$1")"; [ -n "$p" ] && kill -0 -- "-$p" 2>/dev/null; }
+group_alive() {
+  local p; p="$(runner_pid "$1")"
+  [ -n "$p" ] || { alive "$1"; return; }
+  [ -f "$1/alive.lock" ] || return 1                      # older job: never trust its number
+  [ -f "$1/gone" ] && return 1                            # seen fully gone once: number is stale
+  lock_free "$1/alive.lock" || return 0                   # a job process holds the lock
+  if group_exists "$1"; then recent "$1"; return; fi
+  : > "$1/gone"; return 1                                 # remember, so a reused number never counts
+}
+settled() { is_final "$(state_get "$1")" && ! group_alive "$1"; }
+# reap JOB: stop whatever is left of a job (TERM, then KILL the whole group).
+reap() {
+  local n
+  group_alive "$1" || return 0
+  kill_group "$1" TERM
+  for n in 1 2 3 4 5; do group_alive "$1" || return 0; sleep 1; done
+  kill_group "$1" KILL
+  for n in 1 2; do group_alive "$1" || return 0; sleep 1; done
+}
+# A final job whose processes outlived it by this long has lost its own cleanup; reap it.
+REAP_AFTER=10
+overdue() { [ $(( $(now) - $(num "$(cat "$1/ended_at" 2>/dev/null)") )) -ge "$REAP_AFTER" ]; }
+
+# reserve KEY JOB: claim KEY for JOB, or print the holder and fail. Used for "one task per
+# worktree" and "one turn per Codex thread". The check-and-claim runs under an OS file lock
+# (flock, via flock(1) or perl), which the kernel drops if the holder dies — no stale locks.
+reserve() {
+  local owner="$JOBS_DIR/.locks/$1.owner" holder
+  mkdir -p "$JOBS_DIR/.locks" || return 1
+  holder="$(cat "$owner" 2>/dev/null)"
+  if [ -n "$holder" ] && is_job "$holder"; then     # settle a dead or overdue holder first
+    current_state "$holder" > /dev/null
+    is_final "$(state_get "$holder")" && overdue "$holder" && reap "$holder"
+  fi
+  locked "$JOBS_DIR/.locks/$1.lock" "${BASH:-bash}" "$SCRIPT" _claim "$owner" "$2" || return 1
+  [ "$(cat "$owner" 2>/dev/null)" = "$2" ] || { echo "claim for $1 was not recorded"; return 1; }
+}
+locked() {  # lockfile command... — run command holding an exclusive lock on lockfile
+  local f="$1"; shift
+  if command -v flock > /dev/null 2>&1; then flock "$f" "$@"
+  elif command -v perl > /dev/null 2>&1; then
+    perl -MFcntl=:flock -e 'open(my $fh, ">>", shift) or die "lock: $!"; flock($fh, LOCK_EX) or die "lock: $!";
+      system(@ARGV); exit(($? == -1 || ($? & 127)) ? 1 : $? >> 8)' "$f" "$@"
+  else echo "codex-job needs flock or perl" >&2; return 1; fi
+}
+cmd_claim() {  # internal, runs under the lock: owner_file job
+  local holder; holder="$(cat "$1" 2>/dev/null)"
+  if [ -n "$holder" ] && [ "$holder" != "$2" ] && is_job "$holder" && ! settled "$holder"; then
+    echo "$holder"; return 1
+  fi
+  echo "$2" > "$1.tmp.$$" && mv "$1.tmp.$$" "$1"
+}
+
+hash_stdin() { if command -v shasum >/dev/null 2>&1; then shasum -a 256; else sha256sum; fi | cut -c1-16; }
+
+# Fingerprint of what a job could change in a directory. Git checkouts: HEAD, tracked edits,
+# untracked (not ignored) files. Other directories: a listing of sizes and mtimes.
+tree_hash() {
+  local dir="$1"
+  if git -C "$dir" rev-parse --git-dir >/dev/null 2>&1; then
+    {
+      # Labelled sections: the same hunk moving from unstaged to staged must change the hash.
+      echo "== head";      git -C "$dir" rev-parse HEAD 2>/dev/null
+      echo "== worktree";  git -C "$dir" diff --binary 2>/dev/null          # vs index
+      echo "== index";     git -C "$dir" diff --cached --binary 2>/dev/null # vs HEAD
+      echo "== refs";      git -C "$dir" for-each-ref 2>/dev/null
+      echo "== config";    git -C "$dir" config --local --list 2>/dev/null  # remotes etc.
+      echo "== untracked"
+      (cd "$dir" && git ls-files --others --exclude-standard -z | while IFS= read -r -d '' f; do
+        echo "$f"
+        if [ -L "$f" ]; then readlink "$f"; elif [ -f "$f" ]; then cat "$f"; fi
+      done) 2>/dev/null
+    } | hash_stdin
+  else
+    # Size + modification time (seconds) + name for every file.
+    if stat -f '%z' / > /dev/null 2>&1; then
+      (cd "$dir" && find . -type f -exec stat -f '%z %m %N' {} + 2>/dev/null | sort) | hash_stdin
+    else
+      (cd "$dir" && find . -type f -exec stat -c '%s %Y %n' {} + 2>/dev/null | sort) | hash_stdin
+    fi
+  fi
+}
+
+# ---------------------------------------------------------------------------- sandbox
+probe_sandbox() {  # 0 if Codex's own sandbox can start; the probe's stderr goes to $1
+  if command -v perl > /dev/null 2>&1; then   # alarm survives exec: a hung probe dies after 20 s
+    perl -e 'alarm 20; exec @ARGV or die "exec: $!"' "$CODEX" sandbox -- /bin/sh -c true > /dev/null 2> "$1"
+  elif command -v timeout > /dev/null 2>&1; then timeout 20 "$CODEX" sandbox -- /bin/sh -c true > /dev/null 2> "$1"
+  elif command -v gtimeout > /dev/null 2>&1; then gtimeout 20 "$CODEX" sandbox -- /bin/sh -c true > /dev/null 2> "$1"
+  else                                         # plain bash: background it and kill after 20 s
+    "$CODEX" sandbox -- /bin/sh -c true > /dev/null 2> "$1" & local p=$! n
+    for n in $(seq 1 20); do kill -0 "$p" 2>/dev/null || { wait "$p"; return; }; sleep 1; done
+    kill -KILL "$p" 2>/dev/null; echo "codex sandbox probe timed out" >> "$1"; return 1
+  fi
+}
+full_access_allowed() { [ "${CODEX_JOB_ALLOW_FULL:-0}" = 1 ] || [ -f "$ALLOW_FILE" ]; }
+# The probe failed because an outer sandbox refused to nest Codex's (macOS Seatbelt).
+nested_signature() { grep -q 'sandbox_apply: Operation not permitted' "$1" 2>/dev/null; }
+any_failure_allowed() { grep -qx 'any-probe-failure' "$ALLOW_FILE" 2>/dev/null; }
+
+resolve_sandbox() {  # want mode probe_log -> prints the codex sandbox_mode value, or fails
+  local want="$1" mode="$2" log="$3" inner=read-only
+  [ "$mode" = task ] && inner=workspace-write
+  [ "$want" = auto ] || inner="$want"
+  if probe_sandbox "$log"; then echo "$inner"; return 0; fi
+  local why; why="$(head -c 300 "$log" | tr '\n' ' ')"
+  [ "$want" = auto ] || fail_now "Codex's own sandbox cannot start here, so --sandbox $want would leave Codex unable to read or run anything. Probe error: $why"
+  if nested_signature "$log"; then
+    full_access_allowed && { echo danger-full-access; return 0; }
+    fail_now "Codex's own sandbox cannot start because this shell is already inside a sandbox (probe: $why). Run sandboxed, Codex would be unable to read anything. If that outer sandbox is the security boundary, a human can allow full access, in their own terminal: mkdir -p \"$(dirname "$ALLOW_FILE")\" && touch \"$ALLOW_FILE\". Do not work around this by calling codex directly."
+  fi
+  any_failure_allowed && { echo danger-full-access; return 0; }
+  fail_now "Codex's own sandbox failed for a reason other than a nested sandbox, so full access is not used. Probe error: $why. Check \`codex sandbox -- /bin/sh -c true\` and the Codex version."
+}
+
+# ---------------------------------------------------------------------------- processes
+# Detach into a new session so cancel/timeout can kill Codex and everything it spawned, and so
+# the caller's shell (and Claude Code's Bash tool) does not wait on it. All three standard
+# streams are redirected by the caller.
+detach() {
+  if command -v setsid >/dev/null 2>&1; then exec setsid "$@"
+  elif command -v perl >/dev/null 2>&1; then exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $!"' "$@"
+  else echo "codex-job needs setsid or perl to run jobs in their own session" >&2; exit 1; fi
+}
+
+kill_group() {  # job signal — the runner is its session's leader, so -pid is the whole job
+  local p; p="$(runner_pid "$1")"
+  # Only while group_alive vouches for the number (see above): never signal a reused one.
+  [ -n "$p" ] && group_alive "$1" && kill "-$2" -- "-$p" 2>/dev/null
+  return 0
+}
+
+# stop_job JOB: call after the job's final state is set. A runner that has not started yet
+# sees that state and exits on its own; one that has gets its whole session killed.
+stop_job() {
+  local n
+  for n in 1 2 3 4 5 6 7 8 9 10; do
+    [ -n "$(runner_pid "$1")" ] && { reap "$1"; return 0; }
+    kill -0 "$(cat "$1/launcher.pid" 2>/dev/null)" 2>/dev/null || return 0   # never got going
+    sleep 1
+  done
+  return 0
+}
+
+# Internal: runs as the detached session leader; owns Codex's lifetime and the final state.
+cmd_run() {
+  local job="$1" timeout started codex_pid rc line args=()
+  # Hold the liveness lock on fd 9; every process started from here inherits it.
+  exec 9>> "$job/alive.lock"
+  if command -v flock > /dev/null 2>&1; then flock -x 9
+  else perl -MFcntl=:flock -e 'open(my $f, ">&=", 9) or die "fd 9: $!"; flock($f, LOCK_EX) or die "lock: $!"'; fi
+  echo $$ > "$job/runner.pid"
+  is_final "$(state_get "$job")" && exit 0        # cancelled or failed before we got going
+  timeout="$(num "$(meta_get "$job" timeout)")"
+  started="$(now)"; stamp "$job/heartbeat"
+  while IFS= read -r line; do args+=("$line"); done < "$job/argv"
+  (cd "$(meta_get "$job" cwd)" && exec "$CODEX" "${args[@]}") \
+    < "$job/prompt.md" > "$job/events.jsonl" 2> "$job/stderr.log" &
+  codex_pid=$!
+  while kill -0 "$codex_pid" 2>/dev/null; do
+    stamp "$job/heartbeat"
+    if [ $(( $(now) - started )) -ge "$timeout" ]; then
+      finalize "$job" timed-out
+      trap '' TERM
+      kill -TERM -- "-$$" 2>/dev/null; sleep 5; kill -KILL -- "-$$" 2>/dev/null
+      exit 1
+    fi
+    sleep 1
+  done
+  wait "$codex_pid"; rc=$?
+  stamp "$job/heartbeat"
+  echo "$rc" > "$job/exit_code"
+  # Done means: Codex exited cleanly, finished its turn, and left a final message.
+  if [ "$rc" -eq 0 ] && grep -q '"type":"turn.completed"' "$job/events.jsonl" && [ -s "$job/result.md" ]; then
+    finalize "$job" done
+  else
+    finalize "$job" failed
+  fi
+  return 0
+}
+
+thread_id() { sed -n 's/.*"type":"thread.started","thread_id":"\([^"]*\)".*/\1/p' "$1/events.jsonl" 2>/dev/null | head -1; }
+
+# ---------------------------------------------------------------------------- start
+render() {  # template_file cwd -> stdout, with {{CWD}} replaced
+  CODEX_JOB_CWD="$2" awk '{ v = ENVIRON["CODEX_JOB_CWD"]; out = ""; line = $0
+    while ((i = index(line, "{{CWD}}")) > 0) { out = out substr(line, 1, i - 1) v; line = substr(line, i + 7) }
+    print out line }' "$1"
+}
+
+build_prompt() {  # mode user_prompt_file cwd is_resume -> stdout
+  local mode="$1" file="$2" cwd="$3" resumed="$4"
+  if [ "$resumed" = 1 ]; then
+    # The rules and output format are already in this thread; repeat only the essentials.
+    case "$mode" in
+      task) echo "Follow-up. Same rules as before: change files only inside $cwd, do not commit or push." ;;
+      *) echo "Follow-up. Same rules as before: read-only, change nothing; same output format." ;;
+    esac
+    echo; cat "$file"; return
+  fi
+  render "$PROMPTS/preamble-$mode.md" "$cwd"; echo; cat "$file"; echo
+  case "$mode" in review|adversarial) cat "$PROMPTS/output-review.md" ;; esac
+}
+
+main_checkout_of() {  # dir -> the main worktree's root, if dir is a linked worktree
+  local common
+  common="$(cd "$1" && cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P)" || return 1
+  case "$common" in */.git) echo "${common%/.git}" ;; *) return 1 ;; esac
+}
+
+cmd_start() {
+  local prompt="" mode=review cwd="$PWD" name="" timeout="$DEFAULT_TIMEOUT" sandbox=auto
+  local model="" effort="" allow_main=0 resume_thread="" watch=() w
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --prompt) need_value $# "$1"; prompt="$2"; shift 2 ;;
+      --mode) need_value $# "$1"; mode="$2"; shift 2 ;;
+      --cd) need_value $# "$1"; cwd="$2"; shift 2 ;;
+      --watch) need_value $# "$1"; one_line --watch "$2"; [ -d "$2" ] || { echo "--watch directory does not exist: $2" >&2; exit 2; }
+               w="$(cd "$2" && pwd -P)"; one_line --watch "$w"; watch+=("$w"); shift 2 ;;
+      --name) need_value $# "$1"; name="$2"; shift 2 ;;
+      --timeout) need_value $# "$1"; timeout="$2"; shift 2 ;;
+      --sandbox) need_value $# "$1"; sandbox="$2"; shift 2 ;;
+      --model) need_value $# "$1"; model="$2"; shift 2 ;;
+      --effort) need_value $# "$1"; effort="$2"; shift 2 ;;
+      --allow-main) allow_main=1; shift ;;
+      --resume-thread) need_value $# "$1"; resume_thread="$2"; shift 2 ;;   # internal, used by `resume`
+      *) echo "unknown option: $1" >&2; usage ;;
+    esac
+  done
+  case "$mode" in review|adversarial|task) ;; *) echo "unknown --mode: $mode" >&2; exit 2 ;; esac
+  case "$sandbox" in auto|read-only|workspace-write) ;; *) echo "unknown --sandbox: $sandbox (use auto, read-only or workspace-write)" >&2; exit 2 ;; esac
+  case "$timeout" in ''|*[!0-9]*|0) echo "--timeout must be a positive number of seconds" >&2; exit 2 ;; esac
+  one_line --prompt "$prompt"; one_line --cd "$cwd"; one_line --name "$name"
+  case "$model" in *[!A-Za-z0-9._:/-]*|-*) echo "--model: letters, digits and . _ : / - only" >&2; exit 2 ;; esac
+  case "$effort" in *[!a-z]*) echo "--effort: lowercase letters only (e.g. low, medium, high, xhigh)" >&2; exit 2 ;; esac
+  case "$resume_thread" in *[!A-Za-z0-9-]*) echo "bad thread id" >&2; exit 2 ;; esac
+  [ -n "$prompt" ] && [ -f "$prompt" ] || fail_now "--prompt FILE is required and must exist"
+  [ -d "$cwd" ] || fail_now "--cd directory does not exist: $cwd"
+  cwd="$(cd "$cwd" && pwd -P)"; one_line --cd "$cwd"   # the real path can differ from the given one
+  command -v "$CODEX" > /dev/null 2>&1 || fail_now "codex not found on PATH (install: npm install -g @openai/codex, then: codex login)"
+
+  local wt_root="$cwd"
+  if [ "$mode" = task ]; then
+    local main top
+    if top="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)"; then wt_root="$(cd "$top" && pwd -P)"; one_line --cd "$wt_root"
+    else [ "$allow_main" = 1 ] || fail_now "task mode needs --cd to be inside a git worktree (git worktree add <dir> -b <branch>), or pass --allow-main"; fi
+    if main="$(main_checkout_of "$wt_root")" && [ "$main" != "$wt_root" ]; then
+      one_line "main checkout" "$main"
+      watch+=("$main")                       # the user's own checkout must stay untouched
+      if [ -z "$resume_thread" ] && [ -n "$(git -C "$wt_root" status --porcelain 2>/dev/null)" ]; then
+        fail_now "task worktree $wt_root has uncommitted changes; give the task a clean worktree so its diff is only Codex's work"
+      fi
+    elif [ "$allow_main" = 0 ]; then
+      fail_now "task mode refuses to write in the main checkout ($wt_root). Create a worktree: git -C \"$wt_root\" worktree add <dir> -b <branch>, then pass --cd <dir>; or pass --allow-main"
+    fi
+  fi
+
+  mkdir -p "$JOBS_DIR" || fail_now "cannot create jobs dir $JOBS_DIR"
+  local slug job codex_sandbox holder
+  slug="$(printf '%s' "${name:-$mode}" | tr -c 'A-Za-z0-9._-' '-' | cut -c1-40)"
+  job="$(mktemp -d "$JOBS_DIR/$(date +%Y%m%d-%H%M%S)-$slug-XXXX")" || fail_now "cannot create a job dir in $JOBS_DIR"
+  stamp "$job/created_at"; state_set "$job" init   # observers leave an init job alone
+  if [ "$mode" = task ]; then
+    holder="$(reserve "wt-$(printf '%s' "$wt_root" | hash_stdin)" "$job")" \
+      || { rm -rf "$job"; fail_now "another task job is running in $wt_root: $holder"; }
+  fi
+  if [ -n "$resume_thread" ]; then
+    holder="$(reserve "thread-$resume_thread" "$job")" \
+      || { rm -rf "$job"; fail_now "another follow-up on this Codex thread is running: $holder"; }
+  fi
+  codex_sandbox="$(resolve_sandbox "$sandbox" "$mode" "$job/probe.log")" || { rm -rf "$job"; echo "$codex_sandbox"; exit 1; }
+
+  local resumed=0; [ -n "$resume_thread" ] && resumed=1
+  build_prompt "$mode" "$prompt" "$cwd" "$resumed" > "$job/prompt.md"
+  {
+    echo "mode: $mode"; echo "cwd: $cwd"; echo "sandbox: $codex_sandbox"; echo "sandbox_request: $sandbox"
+    echo "timeout: $timeout"
+    echo "started_at: $(now)"; echo "prompt_source: $prompt"
+    [ "$mode" = task ] && echo "base_commit: $(git -C "$cwd" rev-parse HEAD 2>/dev/null)"
+    [ -n "$model" ] && echo "model: $model"
+    [ -n "$effort" ] && echo "effort: $effort"
+    [ -n "$resume_thread" ] && echo "resumed_thread: $resume_thread"
+  } > "$job/meta"
+
+  # Fingerprint every directory the job must not change (reviews: --cd too).
+  local d i=0
+  printf '%s\n' ${watch[@]+"${watch[@]}"} > "$job/watch.list"   # the caller's --watch dirs, for resume
+  [ "$mode" != task ] && watch+=("$cwd")
+  for d in ${watch[@]+"${watch[@]}"}; do
+    [ -d "$d" ] || continue
+    d="$(cd "$d" && pwd -P)"
+    i=$((i + 1)); echo "$d" > "$job/tree.$i.dir"; tree_hash "$d" > "$job/tree.$i.hash"
+  done
+
+  # Codex argv, one argument per line (the runner reads it back). `exec resume` has no
+  # --sandbox or --cd flag, so the sandbox goes in as a config override and the runner cd's.
+  local argv=(exec) a
+  [ -n "$resume_thread" ] && argv+=(resume "$resume_thread")
+  argv+=(--json --skip-git-repo-check -c "sandbox_mode=\"$codex_sandbox\"" -c 'approval_policy="never"')
+  [ -n "$model" ] && argv+=(-m "$model")
+  [ -n "$effort" ] && argv+=(-c "model_reasoning_effort=\"$effort\"")
+  argv+=(-o "$job/result.md" -)
+  for a in "${argv[@]}"; do one_line "codex argument" "$a"; done   # last line of defence
+  printf '%s\n' "${argv[@]}" > "$job/argv"
+
+  set_started "$job"
+  ( detach "${BASH:-bash}" "$SCRIPT" _run "$job" ) < /dev/null > "$job/runner.log" 2>&1 &
+  echo $! > "$job/launcher.pid"
+  local n
+  for n in $(seq 1 "$START_GRACE"); do
+    [ -n "$(thread_id "$job")" ] && break
+    is_final "$(state_get "$job")" && break
+    kill -0 "$(cat "$job/launcher.pid")" 2>/dev/null || { sleep 1; break; }   # runner died at once
+    sleep 1
+  done
+  if [ -z "$(thread_id "$job")" ] && ! is_final "$(state_get "$job")" && finalize "$job" failed; then
+    echo "codex-job: Codex did not report a thread within ${START_GRACE}s. Runner log: $(tail_line "$job/runner.log" 3)" >> "$job/stderr.log"
+    stop_job "$job"
+  fi
+  report "$job"
+}
+
+# ---------------------------------------------------------------------------- report
+tail_line() { tail -n "$2" "$1" 2>/dev/null | tr '\n' ' ' | cut -c1-500; }
+
+current_state() {  # job — reads the state, and settles a job whose runner died silently
+  local job="$1" st
+  st="$(state_get "$job")"
+  is_final "$st" && { echo "$st"; return; }
+  if [ "$st" = init ]; then                 # still being set up by `start`
+    if [ $(( $(now) - $(num "$(cat "$job/created_at" 2>/dev/null)") )) -lt $((START_GRACE + 60)) ]; then echo started; return; fi
+  elif alive "$job"; then
+    [ -n "$(thread_id "$job")" ] && echo running || echo started
+    return
+  fi
+  st="$(state_get "$job")"                 # the runner may have finished since the first read
+  is_final "$st" && { echo "$st"; return; }
+  finalize "$job" failed
+  stop_job "$job"                           # Codex can outlive a killed runner: stop its group
+  st="$(state_get "$job")"; [ "$st" = failed ] || { echo "$st"; return; }
+  echo "codex-job: runner exited without a final state (killed, crashed, or the machine slept)" >> "$job/stderr.log"
+  echo failed
+}
+
+elapsed() {  # job — seconds from start to the final state (or to now while running)
+  local end; end="$(num "$(cat "$1/ended_at" 2>/dev/null)")"; [ "$end" != 0 ] || end="$(now)"
+  local start; start="$(num "$(meta_get "$1" started_at)")"; [ "$start" != 0 ] || start="$(num "$(cat "$1/created_at" 2>/dev/null)")"
+  echo "$(( end - start ))s of $(num "$(meta_get "$1" timeout)")s"
+}
+
+report() {  # job [brief] — brief: the state line plus identity only (for listing many jobs)
+  local job="$1" st rc t
+  st="$(current_state "$job")"
+  is_final "$st" && group_alive "$job" && overdue "$job" && reap "$job"
+  echo "state: $st"
+  echo "job: $job"
+  echo "mode: $(meta_get "$job" mode)"
+  if [ "${2:-}" = brief ]; then echo "elapsed: $(elapsed "$job")"; is_final "$st" && [ "$st" != done ] && return 1; return 0; fi
+  echo "sandbox: $(meta_get "$job" sandbox)"
+  echo "elapsed: $(elapsed "$job")"
+  t="$(thread_id "$job")"; [ -n "$t" ] && echo "thread: $t"
+  if is_final "$st" && group_alive "$job"; then
+    echo "warning: Codex processes of this job are still stopping; wait again before starting another task here"
+  elif is_final "$st" && group_exists "$job" && ! recent "$job"; then
+    echo "warning: a process group with this job's old number ($(runner_pid "$job")) exists, but too long after the job to be sure it is the job's, so it was not stopped. If it is, stop it with: kill -- -$(runner_pid "$job")"
+  fi
+  case "$st" in
+    done)
+      echo "result: $job/result.md ($(wc -c < "$job/result.md" | tr -d ' ') bytes)"
+      local ran ok bad
+      ran="$(grep '"type":"item.completed"' "$job/events.jsonl" | grep -c '"type":"command_execution"')"
+      ok="$(grep '"type":"item.completed"' "$job/events.jsonl" | grep '"type":"command_execution"' | grep -c '"exit_code":0')"
+      bad="$(grep '"type":"item.completed"' "$job/events.jsonl" | grep '"type":"command_execution"' \
+        | grep -v '"exit_code":0' | grep -cE 'sandbox_apply: Operation not permitted|bwrap: |[Ll]andlock')"
+      echo "commands: $ok of $ran succeeded"
+      [ "$bad" -gt 0 ] && echo "warning: $bad command(s) failed with sandbox errors — Codex could not run commands; treat the result as unverified"
+      if [ "$ran" -gt 0 ] && [ "$ok" = 0 ]; then
+        echo "warning: every command Codex ran failed, so it may not have read anything; treat the result as unverified"
+      elif [ "$ran" = 0 ] && [ "$(meta_get "$job" mode)" != task ] && [ -z "$(meta_get "$job" resumed_thread)" ]; then
+        # A follow-up may rightly answer from the earlier turn without running anything.
+        echo "warning: Codex ran no commands, so it may not have read any files; treat the result as unverified"
+      fi
+      local f
+      for f in "$job"/tree.*.dir; do
+        [ -f "$f" ] || continue
+        if [ ! -d "$(cat "$f")" ]; then echo "warning: watched directory is gone: $(cat "$f")"; continue; fi
+        [ "$(tree_hash "$(cat "$f")")" = "$(cat "${f%.dir}.hash")" ] \
+          || echo "warning: tree changed: $(cat "$f") — files changed during a job that must not change them (or someone else edited them meanwhile); check git status there"
+      done
+      if [ "$(meta_get "$job" mode)" = task ]; then
+        echo "changed_files:"; git -C "$(meta_get "$job" cwd)" status --porcelain 2>/dev/null | head -50 | sed 's/^/  /'
+      fi ;;
+    failed)
+      rc="$(cat "$job/exit_code" 2>/dev/null)"; [ -n "$rc" ] && echo "exit_code: $rc"
+      [ -s "$job/result.md" ] || echo "error: no final message from Codex"
+      grep -q '"type":"turn.completed"' "$job/events.jsonl" 2>/dev/null || echo "error: Codex did not finish its turn"
+      # Codex reports refusals, usage limits and backend errors as events, not on stderr.
+      local why; why="$(grep -E '"type":"(turn.failed|error)"' "$job/events.jsonl" 2>/dev/null | tail -1 \
+        | sed -n 's/.*"message":"\([^"]*\)".*/\1/p' | cut -c1-400)"
+      [ -n "$why" ] && echo "codex_error: $why"
+      echo "stderr: $(tail_line "$job/stderr.log" 6)" ;;
+    timed-out) echo "error: stopped after $(meta_get "$job" timeout)s; partial events in $job/events.jsonl" ;;
+    running|started)
+      local last; last="$(tail -n 1 "$job/events.jsonl" 2>/dev/null | sed -n 's/.*"type":"\([^"]*\)".*/\1/p' | head -1)"
+      [ -n "$last" ] && echo "last_event: $last"
+      echo "events: $(cat "$job/events.jsonl" 2>/dev/null | grep -c .)" ;;
+  esac
+  case "$st" in started|running|done) return 0 ;; *) return 1 ;; esac
+}
+
+is_job() { [ -f "$1/created_at" ] || [ -f "$1/meta" ]; }   # meta only: made by an older codex-job
+
+resolve_job() {  # name-or-path -> path, or fails
+  local j="${1:-}"
+  [ -n "$j" ] || { echo "a JOB argument is required" >&2; exit 2; }
+  is_job "$j" || j="$JOBS_DIR/$j"
+  is_job "$j" || fail_now "no such job: $1"
+  echo "$j"
+}
+
+cmd_wait() {
+  local job max="$DEFAULT_WAIT" waited=0
+  job="$(resolve_job "${1:-}")" || { echo "$job"; exit 1; }; shift
+  if [ "${1:-}" = --max ]; then
+    case "${2:-}" in ''|*[!0-9]*) echo "--max must be whole seconds" >&2; exit 2 ;; esac
+    max="$2"
+  fi
+  # Done waiting when the job has a final state AND none of its processes is left.
+  while [ "$waited" -lt "$max" ]; do
+    is_final "$(current_state "$job")" && { group_alive "$job" || break; overdue "$job" && reap "$job"; }
+    sleep 2; waited=$((waited + 2))
+  done
+  report "$job"
+}
+
+cmd_status() {
+  if [ -n "${1:-}" ]; then
+    local job; job="$(resolve_job "$1")" || { echo "$job"; exit 1; }; report "$job"; return
+  fi
+  local j any=0
+  for j in "$JOBS_DIR"/*/; do
+    is_job "$j" || continue; any=1
+    report "${j%/}" brief | tr '\n' ' '; echo
+  done
+  [ "$any" = 1 ] || echo "state: none (no jobs in $JOBS_DIR)"
+  return 0
+}
+
+cmd_result() {
+  local job; job="$(resolve_job "${1:-}")" || { echo "$job"; exit 1; }
+  if [ "$(current_state "$job")" = done ]; then cat "$job/result.md"; else report "$job"; exit 1; fi
+}
+
+cmd_cancel() {
+  local job; job="$(resolve_job "${1:-}")" || { echo "$job"; exit 1; }
+  # Works at any point, even while `start` is still setting the job up.
+  is_final "$(state_get "$job")" || finalize "$job" cancelled
+  stop_job "$job"; reap "$job"             # also clears processes a final job left behind
+  report "$job"
+}
+
+cmd_resume() {
+  local job prompt="" timeout="" t j
+  job="$(resolve_job "${1:-}")" || { echo "$job"; exit 1; }; shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --prompt) need_value $# "$1"; prompt="$2"; shift 2 ;;
+      --timeout) need_value $# "$1"; timeout="$2"; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  t="$(thread_id "$job")"; [ -n "$t" ] || fail_now "this job has no Codex thread to continue"
+  # One turn at a time per Codex thread: check the source job, its own jobs dir, and ours.
+  local dirs; dirs="$(cd "$(dirname "$job")" && pwd -P)"
+  for j in "$job" "$dirs"/*/ "$JOBS_DIR"/*/; do
+    j="${j%/}"; is_job "$j" || continue
+    [ "$(thread_id "$j")" = "$t" ] || continue
+    current_state "$j" > /dev/null
+    is_final "$(state_get "$j")" && overdue "$j" && reap "$j"
+    settled "$j" || fail_now "job $j is still running (or stopping) on this Codex thread; wait for it or cancel it first"
+  done
+  # Same directory, mode, model and effort; sandbox is re-checked, not copied.
+  local extra=() m e
+  m="$(meta_get "$job" model)"; e="$(meta_get "$job" effort)"
+  [ -n "$m" ] && extra+=(--model "$m")
+  [ -n "$e" ] && extra+=(--effort "$e")
+  [ "$(meta_get "$job" mode)" = task ] && extra+=(--allow-main)   # its worktree was checked at start
+  local w; [ -f "$job/watch.list" ] && while IFS= read -r w; do [ -n "$w" ] && extra+=(--watch "$w"); done < "$job/watch.list"
+  local sb; sb="$(meta_get "$job" sandbox_request)"; extra+=(--sandbox "${sb:-auto}")   # never wider than asked
+  cmd_start --prompt "$prompt" --mode "$(meta_get "$job" mode)" --cd "$(meta_get "$job" cwd)" \
+    --timeout "${timeout:-$(meta_get "$job" timeout)}" --name "followup" --resume-thread "$t" \
+    ${extra[@]+"${extra[@]}"}
+}
+
+one_line CODEX_JOBS_DIR "$JOBS_DIR"
+
+case "${1:-}" in
+  start) shift; cmd_start "$@" ;;
+  wait) shift; cmd_wait "$@" ;;
+  status) shift; cmd_status "$@" ;;
+  result) shift; cmd_result "$@" ;;
+  cancel) shift; cmd_cancel "$@" ;;
+  resume) shift; cmd_resume "$@" ;;
+  _run) shift; cmd_run "$@" ;;
+  _claim) shift; cmd_claim "$@" ;;
+  *) usage ;;
+esac

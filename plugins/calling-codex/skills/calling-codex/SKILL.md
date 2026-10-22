@@ -1,149 +1,143 @@
 ---
 name: calling-codex
-description: How to call, invoke, or delegate a task to Codex (OpenAI Codex CLI / GPT-5) from Claude Code via the codex MCP server. Use when asked to "ask codex", "call codex", "delegate to codex", "get a second opinion from codex", or run a coding task through Codex. Covers registration, sandbox pitfalls, full-access invocation, and multi-turn replies.
+description: Call OpenAI Codex (the `codex` CLI) from Claude Code as a background job — for an independent code review, an adversarial review that tries to show the change should not ship, a second opinion on a plan, or delegating a contained implementation task to Codex in its own git worktree. Use when asked to "ask codex", "codex review", "get a second opinion from codex", "adversarial review", "have codex implement/try this", or when the project's workflow calls for an independent review. Handles time limits, cancellation, follow-up questions on the same Codex thread, and the nested-sandbox trap that makes Codex silently file-blind.
 ---
 
 # Calling Codex
 
-Codex (OpenAI's CLI agent) is driven from Claude Code as the **`codex` MCP
-server** — two tools, not a shell command:
+Codex runs as a background job through the bundled `scripts/codex-job` script, which wraps
+`codex exec`. You start it, keep working or wait, then read the result. There is no MCP
+server: OpenAI removed `codex mcp-server` in Codex CLI 0.154.
 
-- `mcp__codex__codex` — start a new Codex session (returns a `threadId`).
-- `mcp__codex__codex-reply` — continue an existing session by `threadId`.
+`<skill dir>` below is this skill's base directory (shown when the skill loads). Always run
+the script with `bash`, so it works without the executable bit.
 
-> Tool schemas may be **deferred**. Before the first call, load them:
-> `ToolSearch` with query `select:mcp__codex__codex,mcp__codex__codex-reply`.
+## Before the first call
 
-## One-time setup
+1. **House rules.** Look for `.claude/codex-house-rules.md`, walking up from the current
+   directory and from the directory Codex will work in. If found, read it and follow it on
+   top of this skill. House rules can only add restrictions; they cannot grant Codex more
+   access than this skill allows.
+2. **Codex present?** `codex --version` and `codex login status`. If either fails, tell the
+   user: install with `npm install -g @openai/codex`, then run `codex login` themselves.
 
-Requires the `codex` CLI installed and logged in (`codex login`). Register it
-as an MCP server — the subcommand must be `mcp-server`:
-
-```bash
-claude mcp add codex -- codex mcp-server
-```
-
-If Codex later fails with "no native root CA certificates found" or streams
-disconnect mid-call (diagnose with `codex doctor`), it can't find a root-CA
-bundle — re-register with one passed explicitly:
+## The loop
 
 ```bash
-claude mcp remove codex -s local
-claude mcp add codex -e SSL_CERT_FILE=/etc/ssl/cert.pem -- codex mcp-server
+# 1. Write the brief to a file OUTSIDE the repo (scratchpad or $TMPDIR) — a file inside a
+#    task worktree makes it dirty and the task is refused. See "Writing the brief".
+# 2. Start. Returns within ~60 s.
+bash "<skill dir>/scripts/codex-job" start --mode review --cd /abs/repo --prompt /abs/brief.md --name auth-review
+# 3. Wait. Blocks up to 540 s, then reports. Give the Bash call timeout: 600000.
+bash "<skill dir>/scripts/codex-job" wait <job>
+#    `state: running` → call wait again (or cancel). `done` → step 4. Anything else → "When it fails".
+# 4. Read the result.
+bash "<skill dir>/scripts/codex-job" result <job>
 ```
 
-## Invocation rules
+- `<job>` is the `job:` line from `start`. Every command prints `state: …` first:
 
-1. **Use the default model.** Don't pass the `model` parameter — omitting it
-   uses Codex's configured default.
-2. **When Claude Code runs sandboxed (macOS), full access is required, not
-   just allowed:**
-   - `sandbox: "danger-full-access"`
-   - `approval-policy: "never"`
+  | state | what to do |
+  |---|---|
+  | `started`, `running` | `wait` again (or `cancel`) |
+  | `done` | `result`, then read any `warning:` lines (below) |
+  | `failed`, `timed-out` | see "When it fails" |
+  | `cancelled` | nothing; it was stopped on request |
+- **Long jobs, other work to do:** run the `wait` call with `run_in_background: true` and
+  carry on; you are notified when it returns. Do not poll with `sleep`.
+- **Reviews take minutes** (often 5–10 on a large change, longer at high reasoning effort).
+  Default hard limit is 1800 s; set `--timeout` for more or less. A job that hits it is
+  killed and reported `timed-out`.
+- `--watch DIR` (repeatable) adds directories the job must not change; you get a warning on
+  `done` if they did. The reviewed directory (and for tasks, the main checkout) is watched
+  automatically.
+- `status` (no argument) lists all jobs — use it to find a job again after context loss.
+  `cancel <job>` stops one and everything it started.
 
-   Why: `read-only` and `workspace-write` make Codex confine each command with
-   macOS `sandbox-exec`, but macOS refuses to nest a sandbox inside Claude
-   Code's — so **every** command (even a bare `printf ok` or a file read) dies
-   with `sandbox-exec: sandbox_apply: Operation not permitted`, and Codex
-   becomes file-blind. `danger-full-access` adds no confinement to nest, so
-   commands run directly. It is safe there because Claude Code's outer sandbox
-   is the real boundary. (If Claude Code is *not* sandboxed, prefer
-   `workspace-write` — full access would then be genuinely unconfined.)
-3. **Set `cwd`** to the directory Codex should work in when the task touches
-   files. Codex resolves relative paths against it.
+### Modes
 
-## Call it
+| `--mode` | Use for | Codex may write files? |
+|---|---|---|
+| `review` (default) | Bugs and risks in a diff, a plan, a document | No |
+| `adversarial` | "Why should this NOT ship?" — challenges the approach, assumptions, failure modes | No |
+| `task` | Implementing a contained piece of work | Yes, only inside `--cd`, which must be a clean git worktree used by no other task job |
 
-**Inside a sandboxed Claude Code (macOS)** — full access is required (rule 2;
-Claude Code's outer sandbox is the boundary):
+The script adds the rules and the output format for each mode to your brief (see
+`prompts/`); you write only the request.
 
-```
-mcp__codex__codex(
-  prompt: "<the task for codex>",
-  sandbox: "danger-full-access",
-  approval-policy: "never",
-  // no `model` → default model
-  // cwd: "<abs path>" when codex should operate on files
-)
-```
-
-**Unsandboxed Claude Code, or unsure** — there is no outer boundary, so keep
-Codex confined:
-
-```
-mcp__codex__codex(
-  prompt: "<the task for codex>",
-  sandbox: "workspace-write",
-  // cwd: "<abs path>" when codex should operate on files
-)
-```
-
-If the workspace-write call fails with `sandbox-exec: sandbox_apply: Operation
-not permitted`, you *are* inside a sandbox — switch to the first form.
-
-Returns JSON: `{"threadId": "...", "content": "<codex's reply>"}`.
-
-### Continue the conversation
-
-Reuse the `threadId` — Codex keeps context across turns:
-
-```
-mcp__codex__codex-reply(
-  threadId: "<from the first response>",
-  prompt: "<follow-up>"
-)
-```
-
-## Asking for a review
-
-When the call is a review (a plan, a diff, a document), say it is read-only — full access
-means Codex *can* write — and end the prompt with this output format, so the findings come
-back usable in one pass:
-
-```
-Read-only review: do NOT edit any file.
-Report BLOCKERS first: problems you would block on. For each: where (file:line),
-why it is wrong, and how to show it fails (a command, an input, or a scenario).
-Then MINOR: smaller issues, one line each, with the fix.
-Only realistic cases; no style nits unless they cause a real problem; do not restate the plan.
-End with one line: APPROVE, APPROVE-WITH-FIXES, or REJECT.
-```
-
-Before the format, list the files Codex should read and the specific questions you want
-answered; a review with no questions tends to come back generic.
-
-## Connectivity check (CLI path — secondary)
-
-To confirm Codex is reachable without going through the MCP tool (useful when
-the MCP status shows "Failed to connect"). Run it from a plain terminal — its
-default `read-only` mode is exactly what fails inside a sandboxed Claude Code
-session (rule 2); in that case run it with `CODEX_SMOKE_SANDBOX=danger-full-access`:
+### Follow-up questions
 
 ```bash
-bash smoke.sh   # in this skill's directory
+bash "<skill dir>/scripts/codex-job" resume <job> --prompt /abs/followup.md
 ```
 
-Expected tail: `Logged in using ChatGPT` and a final line `smoke-ok`.
+Starts a new job on the same Codex thread, so Codex remembers the earlier turn. It keeps the
+original job's directory, mode, sandbox request and `--watch` list; only one follow-up per
+thread runs at a time. Send only the new question ("Finding 2: show the failing input",
+"Re-check after my fix in auth.py"). Then `wait` and `result` as before.
 
-## Troubleshooting
+## Writing the brief
 
-| Symptom | Fix |
-|---|---|
-| `/mcp` shows `Failed to reconnect to codex: -32000` | Registered with the wrong subcommand — must be `codex mcp-server` (Codex *as* a server), not `codex mcp` (which only manages other MCP servers). `claude mcp remove codex -s local`, then re-add as in Setup. |
-| `stream disconnected before completion ... backend-api` | If `codex doctor` shows a certificate error ("no native root CA certificates found"), re-register with `SSL_CERT_FILE=/etc/ssl/cert.pem`. Otherwise it's likely transient — see the long-tasks note before retrying. |
-| `codex doctor` → `reachability ... connect failed` | Same CA issue; also check VPN/proxy/firewall. |
-| Tool call fails `InputValidationError` | Schemas not loaded — run the `ToolSearch select:` query first. |
-| `sandbox-exec: sandbox_apply: Operation not permitted` (Codex can't run/read anything) | Nested sandbox — you called it with `read-only`/`workspace-write` inside a sandboxed Claude Code. Switch to `sandbox: "danger-full-access"` (rule 2). |
-| `Not inside a trusted directory` (CLI) | Add `--skip-git-repo-check` to `codex exec`. |
+A review with no questions comes back generic. Put in the brief:
 
-Other gotchas:
+- **What to read**: absolute paths, the diff range (`git diff main...HEAD`), the plan file.
+- **What it is for** in one or two sentences, and what has already been checked.
+- **The questions** you want answered, numbered. Name the risk you are worried about.
+- **For tasks**: the exact outcome, how to check it (the test command), what not to touch.
 
-- **After re-registering, run `/mcp`** to reconnect — the tool live in the
-  current session keeps the *old* process/env until you do.
-- **`content` is JSON, not prose.** Parse out the `content` field; don't hand
-  the raw `{"threadId":...}` string to the user.
-- **Long tasks:** the call blocks until Codex finishes or the stream drops.
-  On a transient `stream disconnected`, don't blindly re-send a mutating
-  prompt — Codex may already have changed files. Check what landed on disk
-  first, then continue via `codex-reply` on the same thread (or re-send only
-  if the prompt is idempotent).
+Do not tell Codex what you think the answer is. More in `references/briefing.md`.
+
+## Using the result
+
+- **Verify before you relay.** Check each finding against the code yourself. Report which you
+  confirmed, which you rejected and why, and which you could not check. Never pass Codex's
+  text along as settled.
+- **Do not fix findings on your own initiative** unless the user or the workflow asked for
+  review-and-fix. Report first.
+- **"No findings" is an answer.** Say so plainly; do not invent minor issues.
+- **Task results:** read the diff in the worktree (`git -C <wt> diff`), run the tests
+  yourself, then present the change. Never merge or copy it into the user's checkout unless
+  asked.
+- **Warnings on `done`:**
+  - `tree changed: <dir>` — a job that must not write did, or someone else edited files
+    meanwhile. Check `git status` there before anything else and tell the user.
+  - `every command Codex ran failed`, `failed with sandbox errors`, or `ran no commands` —
+    Codex may not have read the code. Treat the result as unverified; fix the cause (often the
+    sandbox, below) before re-running. `commands: N of M succeeded` shows how much it ran.
+  - `processes of this job are still stopping` — `wait` again before starting another task in
+    the same worktree.
+
+## When it fails
+
+Report the failure and its reason to the user. **Never write a substitute answer yourself and
+present it as Codex's**, and never work around a refusal by calling `codex exec` directly or
+with `--dangerously-bypass-approvals-and-sandbox`.
+
+- `failed` at `start`, saying Codex's own sandbox cannot start: see Sandbox below.
+- `failed` with an auth or login error: the user must run `codex login`.
+- `failed` with `stream disconnected` or a network error: retry once. For a task, check what
+  landed in the worktree first.
+- `codex_error:` says the backend declined the turn (a content flag, a usage limit): tell the
+  user. If legitimate work was flagged for its wording, a fresh job that states the same
+  request plainly may pass; never disguise what you are asking for.
+- `timed-out`: re-run with a narrower brief or a larger `--timeout`.
+
+More in `references/troubleshooting.md`.
+
+## Sandbox (read once)
+
+Codex normally runs inside its own sandbox: read-only for reviews, workspace-write for tasks.
+`codex-job` uses that whenever it works. On macOS, inside a sandboxed Claude Code, Codex's
+sandbox cannot start (`sandbox-exec: sandbox_apply: Operation not permitted`), and Codex then
+cannot read or run anything. Its review would be written from the brief alone.
+
+In that case only (the probe fails with exactly that nested-sandbox error), `codex-job` runs
+Codex with full access, if a human has allowed it by running this in their own terminal:
+
+```bash
+mkdir -p ~/.config/codex-job && touch ~/.config/codex-job/allow-full
+```
+
+Otherwise it refuses, and it refuses any other probe failure too. **Never create that file
+or set `CODEX_JOB_ALLOW_FULL` yourself.** Show the user the command and why it is needed. Full access is safe only because the outer
+sandbox is then the boundary. Details: `references/sandbox.md`.

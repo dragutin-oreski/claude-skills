@@ -1,6 +1,6 @@
 {
   "name": "claude-skills",
-  "description": "Battle-tested Claude Code skills: visual diff explainers, Codex delegation, resumable /goal prompts.",
+  "description": "Battle-tested Claude Code skills: visual diff explainers, Codex reviews and delegation, resumable /goal prompts, loop design.",
   "owner": {
     "name": "Dragutin Oreski",
     "email": "dragutin@megi.ai"
@@ -16,9 +16,9 @@
     {
       "name": "calling-codex",
       "source": "./plugins/calling-codex",
-      "description": "Call OpenAI Codex from Claude Code via the codex MCP server — registration, the macOS nested-sandbox pitfall, full-access invocation, multi-turn replies, and a troubleshooting table.",
+      "description": "Call OpenAI Codex from Claude Code as a background job (codex exec): independent and adversarial reviews, worktree-isolated implementation tasks, hard time limits, cancel, follow-ups on the same Codex thread, and a refusal to run file-blind inside a nested sandbox.",
       "category": "workflow",
-      "tags": ["codex", "openai", "mcp", "second-opinion", "delegation"]
+      "tags": ["codex", "openai", "code-review", "adversarial-review", "second-opinion", "delegation"]
     },
     {
       "name": "goal-prompts",

@@ -8,7 +8,7 @@ use on a multi-repo clinical health platform and generalized for any project.
 | Skill | What it does |
 |-------|--------------|
 | [`explain-diff`](plugins/explain-diff/skills/explain-diff/SKILL.md) | Turns a ticket, branch, or commit range into a **visual HTML review explainer**: background before diff, one interactive walker for the change's core mechanism, a literate walkthrough in *execution* order, a cross-repo readiness verdict, and a 5-question sign-off quiz. Implements Geoffrey Litt's "explain diff" / speed-regulator pattern — don't pass the code along until you can pass the quiz. Ships with the HTML design template. |
-| [`calling-codex`](plugins/calling-codex/skills/calling-codex/SKILL.md) | Delegates tasks to OpenAI Codex from inside Claude Code via the `codex` MCP server. Has the painful parts already solved: the `codex mcp-server` vs `codex mcp` registration trap, the macOS **nested-sandbox** failure (why `read-only` makes Codex file-blind and when `danger-full-access` is actually the safe choice), the root-CA/TLS fix, multi-turn threads, and a smoke test. |
+| [`calling-codex`](plugins/calling-codex/skills/calling-codex/SKILL.md) | Lets Claude call **OpenAI Codex as a background job** for an independent review, an **adversarial review** ("why should this not ship?"), or a contained implementation task in its own git worktree. A bundled script (`codex-job`, plain bash) wraps `codex exec` with start / wait / status / result / cancel / resume, a hard time limit, and honest states: a run that never finished its turn or could not read any file is never reported as a clean result. It refuses the **nested-sandbox trap** (inside a sandboxed Claude Code on macOS, Codex's own sandbox cannot start and Codex silently reviews code it never opened) unless a human allows full access. Works without the removed `codex mcp-server`; unlike OpenAI's own Claude Code plugin, Claude can call it on its own. Offline test suite included. |
 | [`writing-goal-prompts`](plugins/goal-prompts/skills/writing-goal-prompts/SKILL.md) | Authors **resumable** prompts for Claude Code's `/goal` command. Encodes the four mechanics that dictate the design (the evaluator only sees the transcript; state must live in files; the 4000-char limit; resume resets counters) plus templates and a validator script, so long-running goals survive interruption instead of restarting. |
 | [`design-loop`](plugins/design-loop/skills/design-loop/SKILL.md) | Designs (never runs) **engineered loops** for long-running agent work — the "loop engineering" pattern as a method. Produces a three-file *loop pack*: a **contract** (outcome as evidence not activity, four-class decision rights with delegable-but-default-queued outward actions, budgets a fresh dispatcher can enforce from disk, five terminal stop reasons, typed gate effects), a crash-safe **ledger** (wall-clock lease lock, reserve-first dispatch, dirty orphans quarantined never deleted), and a **tick prompt**. Ships a validator (`check-loop.sh`) and a deterministic HTML pack renderer (`render_pack.py`). Hardened by two independent adversarial reviews — five blockers found and folded before v1 ever ran. |
 
@@ -42,7 +42,10 @@ cp -R plugins/explain-diff/skills/explain-diff ~/.claude/skills/
 - `/explain-diff TICKET-123` (or "explain this branch/diff") — produces the explainer
   as a local HTML page; where the Artifact tool is available it also publishes it as a
   private Artifact.
-- "Ask codex for a second opinion on this change" — invokes `calling-codex`.
+- "Ask codex for an adversarial review of this branch" — invokes `calling-codex`, which runs
+  Codex in the background and reports back findings it has checked. Inside a sandboxed
+  Claude Code on macOS, allow full access once, in your own terminal:
+  `mkdir -p ~/.config/codex-job && touch ~/.config/codex-job/allow-full`.
 - "Write a goal prompt for migrating X" — invokes `writing-goal-prompts`, which produces
   a validated `GOAL.md` you paste after `/goal`.
 

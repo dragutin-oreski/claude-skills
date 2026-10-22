@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# Stand-in for the `codex` CLI, used by test-codex-job.sh. Behaviour is set per test with
+# FAKE_CODEX_* variables; every call appends its argv (one line) to $FAKE_CODEX_LOG.
+#
+#   FAKE_CODEX_MODE    ok (default) | slow | die-early | no-output | fail-after-start | write-file
+#                      | no-turn (exit 0 + message, but no turn.completed) | blind (commands fail: nested sandbox)
+#                      | noisy (a successful command whose output mentions sandbox_apply)
+#                      | stubborn (it and a child ignore SIGTERM) | blind-bwrap (Linux sandbox failure)
+#                      | refused (backend declines the turn: error events, exit 1)
+#                      | closefd (leaves a child that closed its inherited descriptors)
+#                      | closefd-stubborn (such a child that also ignores SIGTERM; Codex keeps running)
+#   FAKE_CODEX_SLEEP   seconds to sleep in `slow` mode (default 30)
+#   FAKE_SANDBOX_OK    1 = `codex sandbox -- ...` succeeds, else exits 71 like a nested macOS sandbox
+#   FAKE_SANDBOX_SLEEP seconds the sandbox probe takes (to widen start-up races in tests)
+#   FAKE_SANDBOX_ERR   probe fails with this message (exit 2) instead of the nested-sandbox one
+#   FAKE_CHILD_PIDFILE `stubborn` mode: pid of a child that ignores SIGTERM
+#   FAKE_CODEX_PIDFILE each `exec` writes its pid here (tests check it is gone after cancel/timeout)
+set -u
+printf '%s\n' "$*" >> "${FAKE_CODEX_LOG:-/dev/null}"
+
+case "${1:-}" in
+  --version) echo "codex-cli 0.0.0-fake"; exit 0 ;;
+  login) echo "Logged in using ChatGPT"; exit 0 ;;
+  sandbox)
+    sleep "${FAKE_SANDBOX_SLEEP:-0}"
+    [ "${FAKE_SANDBOX_OK:-0}" = 1 ] && exit 0
+    [ -n "${FAKE_SANDBOX_ERR:-}" ] && { echo "$FAKE_SANDBOX_ERR" >&2; exit 2; }
+    echo "sandbox-exec: sandbox_apply: Operation not permitted" >&2; exit 71 ;;
+  exec) shift ;;
+  *) echo "fake-codex: unsupported: $*" >&2; exit 2 ;;
+esac
+
+out="" cd_dir="$PWD" thread="11111111-2222-3333-4444-555555555555" resume=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    resume) resume=1; shift; case "${1:-}" in -*|"") ;; *) thread="$1"; shift ;; esac ;;
+    -o|--output-last-message) out="$2"; shift 2 ;;
+    -C|--cd) cd_dir="$2"; shift 2 ;;
+    -m|--model|-c|--config|-s|--sandbox) shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+mode="${FAKE_CODEX_MODE:-ok}"
+[ -n "${FAKE_CODEX_PIDFILE:-}" ] && echo $$ > "$FAKE_CODEX_PIDFILE"
+prompt="$(cat)"
+
+if [ "$mode" = die-early ]; then echo "error: not logged in" >&2; exit 1; fi
+
+echo '{"type":"thread.started","thread_id":"'"$thread"'"}'
+echo '{"type":"turn.started"}'
+
+case "$mode" in
+  slow) sleep "${FAKE_CODEX_SLEEP:-30}" ;;
+  closefd) ( exec 9>&-; exec sleep 120 ) & echo $! > "${FAKE_CHILD_PIDFILE:-/dev/null}" ;;   # child drops the inherited lock fd
+  closefd-stubborn) ( exec 9>&-; trap '' TERM; exec sleep 120 ) & echo $! > "${FAKE_CHILD_PIDFILE:-/dev/null}"; sleep 120 ;;
+  stubborn) (trap '' TERM; exec sleep 120) & echo $! > "${FAKE_CHILD_PIDFILE:-/dev/null}"; trap '' TERM; sleep 120 ;;
+  fail-after-start) echo "stream disconnected before completion" >&2; exit 1 ;;
+  refused) echo '{"type":"error","message":"This content was flagged for possible cybersecurity risk."}'
+           echo '{"type":"turn.failed","error":{"message":"This content was flagged for possible cybersecurity risk."}}'; exit 1 ;;
+  write-file) echo "oops" > "$cd_dir/written-by-review.txt" ;;
+  noisy) echo '{"type":"item.completed","item":{"id":"c2","type":"command_execution","command":"grep -r sandbox_apply .","aggregated_output":"fake-codex: sandbox-exec: sandbox_apply: Operation not permitted","exit_code":0,"status":"completed"}}' ;;
+  blind-bwrap) echo '{"type":"item.completed","item":{"id":"c3","type":"command_execution","command":"cat a.txt","aggregated_output":"bwrap: Creating new namespace failed: Operation not permitted","exit_code":1,"status":"failed"}}' ;;
+  blind) echo '{"type":"item.completed","item":{"id":"c1","type":"command_execution","command":"cat a.txt","aggregated_output":"sandbox-exec: sandbox_apply: Operation not permitted","exit_code":71,"status":"failed"}}' ;;
+esac
+case "$mode" in blind|blind-bwrap) ;; *)
+  echo '{"type":"item.completed","item":{"id":"c0","type":"command_execution","command":"ls","aggregated_output":"a.txt","exit_code":0,"status":"completed"}}' ;;
+esac
+
+[ "$mode" = no-output ] && { echo '{"type":"turn.completed"}'; exit 0; }
+
+reply="fake reply (resume=$resume, prompt bytes=${#prompt})"
+[ -n "$out" ] && printf '%s\n' "$reply" > "$out"
+echo '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"'"$reply"'"}}'
+[ "$mode" = no-turn ] && exit 0
+echo '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
+exit 0
